@@ -75,7 +75,21 @@ CREATE POLICY "authenticated_select_whatsapp_messages"
   TO authenticated
   USING (true);
 
--- 5. Habilitar Realtime (propagação em tempo real para o frontend)
+-- 5. UNIQUE constraint em whatsapp_conversations.phone_number
+--    Necessário para o upsert ON CONFLICT (phone_number) no avisa-webhook
+DO $$
+BEGIN
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_constraint
+    WHERE conname = 'whatsapp_conversations_phone_number_key'
+      AND conrelid = 'public.whatsapp_conversations'::regclass
+  ) THEN
+    ALTER TABLE public.whatsapp_conversations
+      ADD CONSTRAINT whatsapp_conversations_phone_number_key UNIQUE (phone_number);
+  END IF;
+END $$;
+
+-- 6. Habilitar Realtime (propagação em tempo real para o frontend)
 ALTER TABLE public.whatsapp_messages
   REPLICA IDENTITY FULL;
 
