@@ -48,26 +48,46 @@ CREATE TABLE public.chatbot_node_options (
   created_at timestamp with time zone NOT NULL DEFAULT now()
 );
 
--- 4. Add current_node_id column to existing whatsapp_conversations
-ALTER TABLE public.whatsapp_conversations 
-ADD COLUMN IF NOT EXISTS current_node_id uuid REFERENCES public.chatbot_nodes(id) ON DELETE SET NULL;
+-- 4. Add columns to whatsapp_conversations (guarded: table may be created in a later migration)
+DO $guard$ BEGIN
+  IF EXISTS (
+    SELECT 1 FROM information_schema.tables
+    WHERE table_schema = 'public' AND table_name = 'whatsapp_conversations'
+  ) THEN
+    ALTER TABLE public.whatsapp_conversations
+      ADD COLUMN IF NOT EXISTS current_node_id uuid REFERENCES public.chatbot_nodes(id) ON DELETE SET NULL;
+    ALTER TABLE public.whatsapp_conversations
+      ADD COLUMN IF NOT EXISTS customer_name text;
+    ALTER TABLE public.whatsapp_conversations
+      ADD COLUMN IF NOT EXISTS escalated_at timestamp with time zone;
+    ALTER TABLE public.whatsapp_conversations
+      ADD COLUMN IF NOT EXISTS last_message_at timestamp with time zone DEFAULT now();
+  END IF;
+END $guard$;
 
-ALTER TABLE public.whatsapp_conversations 
-ADD COLUMN IF NOT EXISTS customer_name text;
+-- 5. Add whatsapp_conversation_id to service_queue (guarded: requires whatsapp_conversations)
+DO $guard$ BEGIN
+  IF EXISTS (
+    SELECT 1 FROM information_schema.tables
+    WHERE table_schema = 'public' AND table_name = 'whatsapp_conversations'
+  ) THEN
+    ALTER TABLE public.service_queue
+      ADD COLUMN IF NOT EXISTS whatsapp_conversation_id uuid
+        REFERENCES public.whatsapp_conversations(id) ON DELETE SET NULL;
+  END IF;
+END $guard$;
 
-ALTER TABLE public.whatsapp_conversations 
-ADD COLUMN IF NOT EXISTS escalated_at timestamp with time zone;
-
-ALTER TABLE public.whatsapp_conversations 
-ADD COLUMN IF NOT EXISTS last_message_at timestamp with time zone DEFAULT now();
-
--- 5. Add whatsapp_conversation_id to service_queue
-ALTER TABLE public.service_queue 
-ADD COLUMN IF NOT EXISTS whatsapp_conversation_id uuid REFERENCES public.whatsapp_conversations(id) ON DELETE SET NULL;
-
--- 6. Add conversation_id to service_messages if not exists
-ALTER TABLE public.service_messages 
-ADD COLUMN IF NOT EXISTS conversation_id uuid REFERENCES public.whatsapp_conversations(id) ON DELETE CASCADE;
+-- 6. Add conversation_id to service_messages (guarded: requires whatsapp_conversations)
+DO $guard$ BEGIN
+  IF EXISTS (
+    SELECT 1 FROM information_schema.tables
+    WHERE table_schema = 'public' AND table_name = 'whatsapp_conversations'
+  ) THEN
+    ALTER TABLE public.service_messages
+      ADD COLUMN IF NOT EXISTS conversation_id uuid
+        REFERENCES public.whatsapp_conversations(id) ON DELETE CASCADE;
+  END IF;
+END $guard$;
 
 -- =============================================
 -- INDEXES
@@ -75,9 +95,21 @@ ADD COLUMN IF NOT EXISTS conversation_id uuid REFERENCES public.whatsapp_convers
 CREATE INDEX IF NOT EXISTS idx_chatbot_nodes_flow_id ON public.chatbot_nodes(flow_id);
 CREATE INDEX IF NOT EXISTS idx_chatbot_nodes_next_node_id ON public.chatbot_nodes(next_node_id);
 CREATE INDEX IF NOT EXISTS idx_chatbot_node_options_node_id ON public.chatbot_node_options(node_id);
-CREATE INDEX IF NOT EXISTS idx_whatsapp_conversations_current_node ON public.whatsapp_conversations(current_node_id);
-CREATE INDEX IF NOT EXISTS idx_service_messages_conversation ON public.service_messages(conversation_id);
-CREATE INDEX IF NOT EXISTS idx_service_queue_whatsapp_conv ON public.service_queue(whatsapp_conversation_id);
+
+-- Indexes on whatsapp_conversations columns (guarded: table may not exist yet)
+DO $guard$ BEGIN
+  IF EXISTS (
+    SELECT 1 FROM information_schema.tables
+    WHERE table_schema = 'public' AND table_name = 'whatsapp_conversations'
+  ) THEN
+    CREATE INDEX IF NOT EXISTS idx_whatsapp_conversations_current_node
+      ON public.whatsapp_conversations(current_node_id);
+    CREATE INDEX IF NOT EXISTS idx_service_messages_conversation
+      ON public.service_messages(conversation_id);
+    CREATE INDEX IF NOT EXISTS idx_service_queue_whatsapp_conv
+      ON public.service_queue(whatsapp_conversation_id);
+  END IF;
+END $guard$;
 
 -- =============================================
 -- ROW LEVEL SECURITY
