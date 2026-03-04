@@ -1,4 +1,4 @@
-project_id = "udyjlesjcgxhgdiaptjp"
+project_id = "rmzalauzzdsnitglhbng"
 
 # Public-facing functions (no JWT required)
 [functions.send-complaint-email]
