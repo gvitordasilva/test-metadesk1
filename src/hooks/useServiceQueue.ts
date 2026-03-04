@@ -23,6 +23,8 @@ export type ServiceQueueItem = {
   waiting_since: string;
   created_at: string;
   updated_at: string;
+  /** ID da conversa WhatsApp vinculada (n8n/AvisaAPI) */
+  whatsapp_conversation_id: string | null;
 };
 
 export type QueueFilters = {

@@ -25,3 +25,19 @@ verify_jwt = false
 
 [functions.poll-email-replies]
 verify_jwt = false
+
+# ── Integração N8N / AvisaAPI ──────────────────────────────────────
+# Chamado pelo n8n no INÍCIO do fluxo: registra mensagem recebida
+# Autenticação via header x-n8n-secret (env: N8N_WEBHOOK_SECRET)
+[functions.avisa-webhook]
+verify_jwt = false
+
+# Chamado pelo n8n no FINAL do fluxo: registra resposta enviada ao usuário
+# Autenticação via header x-n8n-secret (env: N8N_WEBHOOK_SECRET)
+[functions.n8n-outbound-webhook]
+verify_jwt = false
+
+# Chamado pelo frontend para o agente humano enviar mensagem via AvisaAPI
+# Requer JWT do usuário autenticado no Supabase
+[functions.avisa-send]
+verify_jwt = true

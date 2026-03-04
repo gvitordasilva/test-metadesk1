@@ -23,6 +23,7 @@ import {
   Image as ImageIcon,
   Download,
   X,
+  MessageSquare,
 } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { ConversationToolbar } from "./ConversationToolbar";
@@ -31,6 +32,7 @@ import { ForwardModal } from "./ForwardModal";
 import { toast } from "sonner";
 import { supabase } from "@/integrations/supabase/client";
 import { useServiceQueue } from "@/hooks/useServiceQueue";
+import { useWhatsAppMessages, WhatsAppMessage } from "@/hooks/useWhatsAppMessages";
 import { ScrollArea } from "@/components/ui/scroll-area";
 
 
@@ -109,11 +111,30 @@ export function ConversationView({
   const { data: queueItems = [] } = useServiceQueue({ excludeCompleted: true });
   const queueItem = queueItems.find(item => item.id === conversationId);
 
+  // Detectar se é uma conversa WhatsApp via n8n/AvisaAPI
+  const whatsappConvId = queueItem?.whatsapp_conversation_id ?? null;
+  const isWhatsAppN8n = queueItem?.channel === "whatsapp" && !!whatsappConvId;
+
+  // Buscar mensagens WhatsApp (n8n/AvisaAPI) em tempo real
+  const { data: whatsAppMsgs = [] } = useWhatsAppMessages(
+    isWhatsAppN8n ? whatsappConvId : null
+  );
+
   // Load messages for this conversation
   const loadMessages = useCallback(async () => {
     if (!conversationId) return;
-    
+
     try {
+      // ── Caminho WhatsApp n8n/AvisaAPI ──────────────────────────────────
+      // Se a conversa tem whatsapp_conversation_id, as mensagens vêm de
+      // whatsapp_messages (carregadas pelo useWhatsAppMessages acima).
+      // Não precisamos fazer fetch adicional; apenas sinalizar loading=false.
+      if (isWhatsAppN8n) {
+        setIsLoadingMessages(false);
+        return;
+      }
+
+      // ── Caminho padrão (outros canais) ─────────────────────────────────
       // Try loading from service_messages using conversation_id reference
       // Messages are stored with session_id pointing to either a service_session or queue item
       const { data: sessionData } = await supabase
@@ -130,7 +151,7 @@ export function ConversationView({
           .select("*")
           .eq("session_id", sessionData.id)
           .order("created_at", { ascending: true });
-        
+
         if (msgs && msgs.length > 0) {
           setMessages(msgs.map(m => ({
             id: m.id,
@@ -168,7 +189,7 @@ export function ConversationView({
     } finally {
       setIsLoadingMessages(false);
     }
-  }, [conversationId]);
+  }, [conversationId, isWhatsAppN8n]);
 
   // Load audit log events for linked complaint
   const loadAuditEvents = useCallback(async () => {
@@ -212,11 +233,24 @@ export function ConversationView({
     loadAuditEvents();
   }, [loadMessages, loadAuditEvents]);
 
+  // Converter mensagens WhatsApp (n8n) para o formato TimelineEntry
+  const whatsAppTimelineEntries: TimelineEntry[] = useMemo(() => {
+    if (!isWhatsAppN8n) return [];
+    return whatsAppMsgs.map((m: WhatsAppMessage) => ({
+      id: m.id,
+      content: m.content,
+      sender_type: m.sender_type as TimelineEntry["sender_type"],
+      created_at: m.created_at,
+    }));
+  }, [isWhatsAppN8n, whatsAppMsgs]);
+
   // Merge messages and audit events chronologically
   const timeline = useMemo(() => {
-    const all = [...messages, ...auditEvents];
+    // Para WhatsApp n8n: usar whatsAppTimelineEntries; para outros: usar messages
+    const baseMessages = isWhatsAppN8n ? whatsAppTimelineEntries : messages;
+    const all = [...baseMessages, ...auditEvents];
     return all.sort((a, b) => new Date(a.created_at).getTime() - new Date(b.created_at).getTime());
-  }, [messages, auditEvents]);
+  }, [messages, auditEvents, isWhatsAppN8n, whatsAppTimelineEntries]);
 
   // Subscribe to new messages in real-time
   useEffect(() => {
@@ -306,6 +340,37 @@ export function ConversationView({
     setIsSending(true);
 
     try {
+      // ── Caminho WhatsApp n8n/AvisaAPI ──────────────────────────────────
+      // Envia via avisa-send (armazena em whatsapp_messages + envia via AvisaAPI)
+      if (isWhatsAppN8n && whatsappConvId) {
+        const { data: { user } } = await supabase.auth.getUser();
+        const agentName = user?.email || "Atendente";
+
+        const { data, error } = await supabase.functions.invoke("avisa-send", {
+          body: {
+            whatsapp_conversation_id: whatsappConvId,
+            content,
+            agent_name: agentName,
+          },
+        });
+
+        if (error) {
+          console.error("Error calling avisa-send:", error);
+          toast.error("Erro ao enviar mensagem via WhatsApp.");
+          return;
+        }
+
+        // Atualizar status da fila
+        await supabase
+          .from("service_queue")
+          .update({ status: "in_progress" })
+          .eq("id", conversationId);
+
+        // O realtime já vai adicionar a mensagem ao estado via useWhatsAppMessages
+        return;
+      }
+
+      // ── Caminho padrão (outros canais) ─────────────────────────────────
       // Find or create a service session for this conversation
       let sessionId: string | null = null;
 
@@ -582,7 +647,7 @@ export function ConversationView({
 
   const getSenderLabel = (senderType: string) => {
     switch (senderType) {
-      case "bot": return "Max (Bot)";
+      case "bot": return isWhatsAppN8n ? "n8n Bot" : "Max (Bot)";
       case "agent": return "Atendente";
       default: return queueItem?.customer_name || "Cliente";
     }
@@ -639,10 +704,22 @@ export function ConversationView({
               </div>
             )}
             <div>
-              <h3 className="font-medium">{customerName}</h3>
+              <div className="flex items-center gap-2">
+                <h3 className="font-medium">{customerName}</h3>
+                {isWhatsAppN8n && (
+                  <Badge
+                    variant="outline"
+                    className="text-[10px] px-1.5 py-0 h-4 border-[#25D366] text-[#25D366] flex items-center gap-1"
+                  >
+                    <MessageSquare className="h-2.5 w-2.5" />
+                    n8n
+                  </Badge>
+                )}
+              </div>
               <p className="text-xs text-muted-foreground">
                 {queueItem?.subject || "Atendimento"}
                 {queueItem?.channel && ` • Canal: ${queueItem.channel}`}
+                {queueItem?.customer_phone && ` • ${queueItem.customer_phone}`}
               </p>
             </div>
           </div>
