@@ -744,6 +744,7 @@ export type Database = {
           updated_at: string
           voice_session_id: string | null
           waiting_since: string
+          whatsapp_conversation_id: string | null
         }
         Insert: {
           assigned_to?: string | null
@@ -763,6 +764,7 @@ export type Database = {
           updated_at?: string
           voice_session_id?: string | null
           waiting_since?: string
+          whatsapp_conversation_id?: string | null
         }
         Update: {
           assigned_to?: string | null
@@ -782,8 +784,17 @@ export type Database = {
           updated_at?: string
           voice_session_id?: string | null
           waiting_since?: string
+          whatsapp_conversation_id?: string | null
         }
-        Relationships: []
+        Relationships: [
+          {
+            foreignKeyName: "service_queue_whatsapp_conversation_id_fkey"
+            columns: ["whatsapp_conversation_id"]
+            isOneToOne: false
+            referencedRelation: "whatsapp_conversations"
+            referencedColumns: ["id"]
+          },
+        ]
       }
       service_sessions: {
         Row: {
@@ -922,6 +933,56 @@ export type Database = {
             columns: ["current_node_id"]
             isOneToOne: false
             referencedRelation: "chatbot_nodes"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      whatsapp_messages: {
+        Row: {
+          id: string
+          whatsapp_conversation_id: string
+          direction: string
+          sender_type: string
+          content: string
+          content_type: string
+          status: string
+          external_msg_id: string | null
+          n8n_flow_id: string | null
+          raw_payload: Json | null
+          created_at: string
+        }
+        Insert: {
+          id?: string
+          whatsapp_conversation_id: string
+          direction: string
+          sender_type: string
+          content: string
+          content_type?: string
+          status?: string
+          external_msg_id?: string | null
+          n8n_flow_id?: string | null
+          raw_payload?: Json | null
+          created_at?: string
+        }
+        Update: {
+          id?: string
+          whatsapp_conversation_id?: string
+          direction?: string
+          sender_type?: string
+          content?: string
+          content_type?: string
+          status?: string
+          external_msg_id?: string | null
+          n8n_flow_id?: string | null
+          raw_payload?: Json | null
+          created_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "whatsapp_messages_whatsapp_conversation_id_fkey"
+            columns: ["whatsapp_conversation_id"]
+            isOneToOne: false
+            referencedRelation: "whatsapp_conversations"
             referencedColumns: ["id"]
           },
         ]
