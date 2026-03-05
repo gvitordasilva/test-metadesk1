@@ -113,9 +113,28 @@ Deno.serve(async (req) => {
     // ---------------------------------------------------------------
     // Buscar a conversa WhatsApp:
     //   1. Por conversation_id direto (preferencial — evita problema do LID)
+    //      → valida existência no banco antes de usar
     //   2. Por phone_number (fallback)
     // ---------------------------------------------------------------
-    let conversationId: string | null = directConversationId;
+    let conversationId: string | null = null;
+
+    if (directConversationId) {
+      const { data: conv } = await supabase
+        .from("whatsapp_conversations")
+        .select("id")
+        .eq("id", directConversationId)
+        .maybeSingle();
+
+      if (conv) {
+        conversationId = conv.id;
+        console.log("n8n-outbound-webhook: conversa encontrada por conversation_id:", conversationId);
+      } else {
+        console.warn(
+          "n8n-outbound-webhook: conversation_id não encontrado no banco, tentando fallback por phone:",
+          directConversationId
+        );
+      }
+    }
 
     if (!conversationId) {
       if (!phoneNumber) {
@@ -145,6 +164,7 @@ Deno.serve(async (req) => {
         );
       }
       conversationId = conv.id;
+      console.log("n8n-outbound-webhook: conversa encontrada por phone_number:", conversationId);
     }
 
     // Objeto simplificado para uso nos passos seguintes
