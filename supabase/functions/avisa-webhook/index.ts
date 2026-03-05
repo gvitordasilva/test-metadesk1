@@ -64,6 +64,11 @@ Deno.serve(async (req) => {
       payload.sender ??
       payload.contact?.phone ??
       payload.data?.phone ??
+      payload.data?.from ??
+      payload.data?.sender ??
+      // Evolution API: remoteJid format "5511999999999@s.whatsapp.net"
+      payload.data?.key?.remoteJid?.split("@")[0] ??
+      payload.key?.remoteJid?.split("@")[0] ??
       "";
     const phoneNumber = phoneRaw.replace(/\D/g, ""); // somente dígitos
 
@@ -73,16 +78,31 @@ Deno.serve(async (req) => {
       payload.pushName ??
       payload.contact?.name ??
       payload.data?.name ??
+      payload.data?.pushName ??
       phoneNumber;
 
+    // Extração do conteúdo de texto — cobre múltiplos formatos de API:
+    //   AvisaAPI simples:      payload.text | payload.body | payload.message
+    //   AvisaAPI aninhado:     payload.data.text | payload.data.body
+    //   Evolution API:         payload.message.conversation | payload.message.extendedTextMessage.text
+    //   n8n wrapper:           payload.data.message | payload.message.text
+    //   Outros formatos:       payload.content | payload.msg | payload.mensagem
     const content: string =
       payload.text ??
-      payload.message ??
       payload.body ??
-      payload.data?.text ??
-      payload.data?.body ??
+      (typeof payload.message === "string" ? payload.message : null) ??
+      payload.content ??
+      payload.msg ??
+      payload.mensagem ??
+      payload.message?.conversation ??
+      payload.message?.extendedTextMessage?.text ??
+      payload.message?.imageMessage?.caption ??
       payload.message?.text ??
       payload.message?.body ??
+      payload.data?.text ??
+      payload.data?.body ??
+      payload.data?.message ??
+      payload.data?.content ??
       "";
 
     const externalMsgId: string | null =
@@ -90,7 +110,16 @@ Deno.serve(async (req) => {
       payload.id ??
       payload.msg_id ??
       payload.data?.id ??
+      payload.data?.key?.id ??
+      payload.key?.id ??
       null;
+
+    // Log de diagnóstico para identificar campos do payload em produção
+    console.log("avisa-webhook campos extraídos:", {
+      phoneRaw, phoneNumber, contactName,
+      content: content || "(vazio - verifique campos no payload acima)",
+      externalMsgId,
+    });
 
     const contentType: string =
       payload.type ?? payload.message_type ?? "text";

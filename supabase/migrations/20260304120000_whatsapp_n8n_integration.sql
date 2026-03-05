@@ -90,8 +90,32 @@ BEGIN
 END $$;
 
 -- 6. Habilitar Realtime (propagação em tempo real para o frontend)
+--    REPLICA IDENTITY FULL: envia dados completos da linha no evento Realtime
 ALTER TABLE public.whatsapp_messages
   REPLICA IDENTITY FULL;
 
 ALTER TABLE public.whatsapp_conversations
   REPLICA IDENTITY FULL;
+
+--    Adicionar tabelas à publication do Supabase Realtime
+--    (sem isso postgres_changes não dispara no frontend)
+DO $$
+BEGIN
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_publication_tables
+    WHERE pubname = 'supabase_realtime'
+      AND schemaname = 'public'
+      AND tablename = 'whatsapp_messages'
+  ) THEN
+    ALTER PUBLICATION supabase_realtime ADD TABLE public.whatsapp_messages;
+  END IF;
+
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_publication_tables
+    WHERE pubname = 'supabase_realtime'
+      AND schemaname = 'public'
+      AND tablename = 'whatsapp_conversations'
+  ) THEN
+    ALTER PUBLICATION supabase_realtime ADD TABLE public.whatsapp_conversations;
+  END IF;
+END $$;

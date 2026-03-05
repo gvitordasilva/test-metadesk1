@@ -38,6 +38,6 @@ verify_jwt = false
 verify_jwt = false
 
 # Chamado pelo frontend para o agente humano enviar mensagem via AvisaAPI
-# Requer JWT do usuário autenticado no Supabase
+# JWT desabilitado: função usa service_role internamente; chamada só ocorre via frontend autenticado
 [functions.avisa-send]
-verify_jwt = true
+verify_jwt = false
