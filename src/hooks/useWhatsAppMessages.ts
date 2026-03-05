@@ -52,10 +52,12 @@ export function useWhatsAppMessages(
       return (data ?? []) as WhatsAppMessage[];
     },
     enabled: !!whatsappConversationId,
-    staleTime: 30_000,
+    staleTime: 0,
+    // Polling como fallback caso o Realtime não entregue o evento
+    refetchInterval: 8_000,
   });
 
-  // Subscrição Realtime: nova mensagem → invalida cache (React Query refetch)
+  // Subscrição Realtime: nova mensagem → invalida cache (força refetch imediato)
   useEffect(() => {
     if (!whatsappConversationId) return;
 
@@ -69,18 +71,12 @@ export function useWhatsAppMessages(
           table: "whatsapp_messages",
           filter: `whatsapp_conversation_id=eq.${whatsappConversationId}`,
         },
-        (payload) => {
-          // Append otimista direto no cache para zero latência visual
-          queryClient.setQueryData(
-            ["whatsapp-messages", whatsappConversationId],
-            (old: WhatsAppMessage[] | undefined) => {
-              const current = old ?? [];
-              const incoming = payload.new as WhatsAppMessage;
-              // Evitar duplicata (realtime pode disparar + de uma vez)
-              if (current.some((m) => m.id === incoming.id)) return current;
-              return [...current, incoming];
-            }
-          );
+        () => {
+          // Invalida o cache para forçar refetch imediato — mais confiável
+          // que manipular o cache diretamente, pois garante dados frescos do servidor
+          queryClient.invalidateQueries({
+            queryKey: ["whatsapp-messages", whatsappConversationId],
+          });
         }
       )
       .subscribe();
