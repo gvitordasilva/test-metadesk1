@@ -65,13 +65,18 @@ Deno.serve(async (req) => {
     const n8nExecutionId: string | null =
       payload.n8n_execution_id ?? payload.execution_id ?? payload.flow_id ?? null;
 
+    // conversation_id pode ser enviado diretamente pelo n8n (preferencial)
+    // para evitar divergência entre LID e número real de telefone
+    const directConversationId: string | null =
+      payload.conversation_id ?? payload.whatsapp_conversation_id ?? null;
+
     const senderType: "bot" | "agent" =
       payload.sender_type === "agent" ? "agent" : "bot";
 
-    if (!phoneNumber || !content) {
+    if ((!phoneNumber && !directConversationId) || !content) {
       return new Response(
         JSON.stringify({
-          error: "Campos obrigatórios ausentes: phone_number e content",
+          error: "Campos obrigatórios ausentes: (phone_number ou conversation_id) e content",
         }),
         { status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" } }
       );
@@ -106,28 +111,44 @@ Deno.serve(async (req) => {
     }
 
     // ---------------------------------------------------------------
-    // Buscar a conversa WhatsApp pelo número de telefone
+    // Buscar a conversa WhatsApp:
+    //   1. Por conversation_id direto (preferencial — evita problema do LID)
+    //   2. Por phone_number (fallback)
     // ---------------------------------------------------------------
-    const { data: conversation, error: convError } = await supabase
-      .from("whatsapp_conversations")
-      .select("id")
-      .eq("phone_number", phoneNumber)
-      .order("created_at", { ascending: false })
-      .limit(1)
-      .maybeSingle();
+    let conversationId: string | null = directConversationId;
 
-    if (convError || !conversation) {
-      console.error(
-        "n8n-outbound-webhook: conversa não encontrada para:",
-        phoneNumber
-      );
-      return new Response(
-        JSON.stringify({
-          error: `Conversa não encontrada para o número: ${phoneNumber}`,
-        }),
-        { status: 404, headers: { ...corsHeaders, "Content-Type": "application/json" } }
-      );
+    if (!conversationId) {
+      if (!phoneNumber) {
+        return new Response(
+          JSON.stringify({ error: "Campos obrigatórios ausentes: phone_number ou conversation_id" }),
+          { status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" } }
+        );
+      }
+      const { data: conv, error: convError } = await supabase
+        .from("whatsapp_conversations")
+        .select("id")
+        .eq("phone_number", phoneNumber)
+        .order("created_at", { ascending: false })
+        .limit(1)
+        .maybeSingle();
+
+      if (convError || !conv) {
+        console.error(
+          "n8n-outbound-webhook: conversa não encontrada para:",
+          phoneNumber
+        );
+        return new Response(
+          JSON.stringify({
+            error: `Conversa não encontrada para o número: ${phoneNumber}`,
+          }),
+          { status: 404, headers: { ...corsHeaders, "Content-Type": "application/json" } }
+        );
+      }
+      conversationId = conv.id;
     }
+
+    // Objeto simplificado para uso nos passos seguintes
+    const conversation = { id: conversationId };
 
     // ---------------------------------------------------------------
     // Inserir mensagem de saída em whatsapp_messages

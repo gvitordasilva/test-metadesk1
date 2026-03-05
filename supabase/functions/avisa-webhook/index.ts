@@ -240,8 +240,15 @@ Deno.serve(async (req) => {
 
     console.log("avisa-webhook: processado com sucesso, message_id:", message.id);
 
+    // Retorna conversation_id para que o n8n possa repassá-lo ao
+    // n8n-outbound-webhook — evita divergência de phone number (LID vs real)
     return new Response(
-      JSON.stringify({ status: "ok", message_id: message.id }),
+      JSON.stringify({
+        status: "ok",
+        message_id: message.id,
+        conversation_id: conversation.id,
+        phone_number: phoneNumber,
+      }),
       { headers: { ...corsHeaders, "Content-Type": "application/json" } }
     );
   } catch (error) {
