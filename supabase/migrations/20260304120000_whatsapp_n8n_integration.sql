@@ -75,9 +75,47 @@ CREATE POLICY "authenticated_select_whatsapp_messages"
   TO authenticated
   USING (true);
 
--- 5. Habilitar Realtime (propagação em tempo real para o frontend)
+-- 5. UNIQUE constraint em whatsapp_conversations.phone_number
+--    Necessário para o upsert ON CONFLICT (phone_number) no avisa-webhook
+DO $$
+BEGIN
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_constraint
+    WHERE conname = 'whatsapp_conversations_phone_number_key'
+      AND conrelid = 'public.whatsapp_conversations'::regclass
+  ) THEN
+    ALTER TABLE public.whatsapp_conversations
+      ADD CONSTRAINT whatsapp_conversations_phone_number_key UNIQUE (phone_number);
+  END IF;
+END $$;
+
+-- 6. Habilitar Realtime (propagação em tempo real para o frontend)
+--    REPLICA IDENTITY FULL: envia dados completos da linha no evento Realtime
 ALTER TABLE public.whatsapp_messages
   REPLICA IDENTITY FULL;
 
 ALTER TABLE public.whatsapp_conversations
   REPLICA IDENTITY FULL;
+
+--    Adicionar tabelas à publication do Supabase Realtime
+--    (sem isso postgres_changes não dispara no frontend)
+DO $$
+BEGIN
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_publication_tables
+    WHERE pubname = 'supabase_realtime'
+      AND schemaname = 'public'
+      AND tablename = 'whatsapp_messages'
+  ) THEN
+    ALTER PUBLICATION supabase_realtime ADD TABLE public.whatsapp_messages;
+  END IF;
+
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_publication_tables
+    WHERE pubname = 'supabase_realtime'
+      AND schemaname = 'public'
+      AND tablename = 'whatsapp_conversations'
+  ) THEN
+    ALTER PUBLICATION supabase_realtime ADD TABLE public.whatsapp_conversations;
+  END IF;
+END $$;

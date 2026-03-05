@@ -1,4 +1,5 @@
 import { useState, useEffect, useRef, useCallback, useMemo, ChangeEvent } from "react";
+import { useQueryClient } from "@tanstack/react-query";
 import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
@@ -106,14 +107,16 @@ export function ConversationView({
   const [pendingFile, setPendingFile] = useState<{ file: File; previewUrl: string | null } | null>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const queryClient = useQueryClient();
 
   // Get queue item data for customer info
-  const { data: queueItems = [] } = useServiceQueue({ excludeCompleted: true });
+  // isLoading=true while the initial fetch is in flight — prevents false "non-WhatsApp" branch
+  const { data: queueItems = [], isLoading: isQueueLoading } = useServiceQueue({ excludeCompleted: true });
   const queueItem = queueItems.find(item => item.id === conversationId);
 
   // Detectar se é uma conversa WhatsApp via n8n/AvisaAPI
   const whatsappConvId = queueItem?.whatsapp_conversation_id ?? null;
-  const isWhatsAppN8n = queueItem?.channel === "whatsapp" && !!whatsappConvId;
+  const isWhatsAppN8n = !isQueueLoading && queueItem?.channel === "whatsapp" && !!whatsappConvId;
 
   // Buscar mensagens WhatsApp (n8n/AvisaAPI) em tempo real
   const { data: whatsAppMsgs = [] } = useWhatsAppMessages(
@@ -123,6 +126,8 @@ export function ConversationView({
   // Load messages for this conversation
   const loadMessages = useCallback(async () => {
     if (!conversationId) return;
+    // Aguardar o carregamento da fila antes de decidir o caminho
+    if (isQueueLoading) return;
 
     try {
       // ── Caminho WhatsApp n8n/AvisaAPI ──────────────────────────────────
@@ -189,7 +194,7 @@ export function ConversationView({
     } finally {
       setIsLoadingMessages(false);
     }
-  }, [conversationId, isWhatsAppN8n]);
+  }, [conversationId, isWhatsAppN8n, isQueueLoading]);
 
   // Load audit log events for linked complaint
   const loadAuditEvents = useCallback(async () => {
@@ -228,10 +233,15 @@ export function ConversationView({
   }, [queueItem?.complaint_id]);
 
   useEffect(() => {
+    // Mantém o loading ativo enquanto a fila ainda não chegou
+    if (isQueueLoading) {
+      setIsLoadingMessages(true);
+      return;
+    }
     setIsLoadingMessages(true);
     loadMessages();
     loadAuditEvents();
-  }, [loadMessages, loadAuditEvents]);
+  }, [loadMessages, loadAuditEvents, isQueueLoading]);
 
   // Converter mensagens WhatsApp (n8n) para o formato TimelineEntry
   const whatsAppTimelineEntries: TimelineEntry[] = useMemo(() => {
@@ -366,7 +376,29 @@ export function ConversationView({
           .update({ status: "in_progress" })
           .eq("id", conversationId);
 
-        // O realtime já vai adicionar a mensagem ao estado via useWhatsAppMessages
+        // Atualização otimista: adicionar mensagem do agente ao cache imediatamente.
+        // O Realtime também vai disparar, mas o hook deduplica por ID.
+        const optimisticMsg: WhatsAppMessage = {
+          id: data?.message_id ?? crypto.randomUUID(),
+          whatsapp_conversation_id: whatsappConvId!,
+          direction: "outbound",
+          sender_type: "agent",
+          content,
+          content_type: "text",
+          status: "sent",
+          external_msg_id: null,
+          n8n_flow_id: null,
+          raw_payload: null,
+          created_at: new Date().toISOString(),
+        };
+        queryClient.setQueryData(
+          ["whatsapp-messages", whatsappConvId],
+          (old: WhatsAppMessage[] | undefined) => {
+            const current = old ?? [];
+            if (current.some((m) => m.id === optimisticMsg.id)) return current;
+            return [...current, optimisticMsg];
+          }
+        );
         return;
       }
 
