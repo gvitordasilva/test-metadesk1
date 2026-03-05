@@ -207,7 +207,7 @@ export function ConversationsList({
                       />
                     </div>
                     <p className="text-sm text-muted-foreground truncate">
-                      {item.subject || item.last_message || "Novo atendimento"}
+                      {item.last_message || item.subject || "Novo atendimento"}
                     </p>
                     {/* AI Triage sentiment indicator */}
                     {(item as any).ai_sentiment && (
