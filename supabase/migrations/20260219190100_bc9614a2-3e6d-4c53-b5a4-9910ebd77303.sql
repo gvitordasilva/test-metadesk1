@@ -1,6 +1,6 @@
 
 -- Tabela para armazenar avaliações NPS dos atendimentos
-CREATE TABLE public.nps_responses (
+CREATE TABLE IF NOT EXISTS public.nps_responses (
   id UUID NOT NULL DEFAULT gen_random_uuid() PRIMARY KEY,
   score INTEGER NOT NULL CHECK (score >= 0 AND score <= 10),
   comment TEXT,

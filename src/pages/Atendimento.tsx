@@ -4,10 +4,9 @@ import { MainLayout } from "@/components/layout/MainLayout";
 import { ConversationsList } from "@/components/omnichannel/ConversationsList";
 import { ConversationView } from "@/components/omnichannel/ConversationView";
 import { CaseInfoPanel } from "@/components/omnichannel/CaseInfoPanel";
-import { ServiceCountdownDialog } from "@/components/omnichannel/ServiceCountdownDialog";
 import { AttendantStatusToggle } from "@/components/omnichannel/AttendantStatusToggle";
 import { useServiceSession } from "@/hooks/useServiceSession";
-import { useServiceQueue, ServiceQueueItem } from "@/hooks/useServiceQueue";
+import { useServiceQueue } from "@/hooks/useServiceQueue";
 import { useComplaint } from "@/hooks/useComplaints";
 import { useSlaSettingByKey } from "@/hooks/useSlaSettings";
 import { useActiveSession } from "@/contexts/ActiveSessionContext";
@@ -18,12 +17,7 @@ export default function Atendimento() {
   const [selectedConversation, setSelectedConversation] = useState<string | null>(null);
   const [showCasePanel, setShowCasePanel] = useState(true);
   const [currentSentiment, setCurrentSentiment] = useState<"positive" | "neutral" | "frustrated" | "angry" | null>("neutral");
-  const [showCountdown, setShowCountdown] = useState(false);
-  const [pendingConversation, setPendingConversation] = useState<string | null>(null);
 
-  // SLA para countdown
-  const countdownSla = useSlaSettingByKey("countdown_seconds");
-  const countdownSeconds = countdownSla?.target_value ?? 10;
   const tmaSla = useSlaSettingByKey("tma");
 
   // Buscar fila de atendimento
@@ -36,7 +30,7 @@ export default function Atendimento() {
     startSession,
     endSession,
     forwardToStep,
-  } = useServiceSession();
+  } = useServiceSession(selectedConversation);
 
   const { setHasActiveSession } = useActiveSession();
   const isSessionActive = currentSession?.status === "active";
@@ -58,33 +52,23 @@ export default function Atendimento() {
     return () => window.removeEventListener("beforeunload", handler);
   }, [isSessionActive]);
 
-  // Don't auto-select — let the attendant choose manually after finalizing
-
-  // Quando o countdown termina ou usuário clica "Iniciar Agora"
-  const handleCountdownStart = useCallback(() => {
-    if (pendingConversation) {
-      setSelectedConversation(pendingConversation);
-      startSession(pendingConversation);
-      setPendingConversation(null);
-    }
-  }, [pendingConversation, startSession]);
-
-  const handleSelectConversation = useCallback((id: string) => {
+  const handleSelectConversation = useCallback(async (id: string) => {
     if (id === selectedConversation) return;
-    // Mostrar countdown ao trocar de conversa
-    setPendingConversation(id);
-    setShowCountdown(true);
+    setSelectedConversation(id);
+
+    // Zerar contador de não lidas ao entrar na conversa
+    const { supabase } = await import("@/integrations/supabase/client");
+    await supabase
+      .from("service_queue" as any)
+      .update({ unread_count: 0 })
+      .eq("id", id);
   }, [selectedConversation]);
 
-  const handleCountdownClose = useCallback(() => {
-    setShowCountdown(false);
-    // Se não iniciou via botão, o countdown já chamou onStart
-    if (pendingConversation && !selectedConversation) {
-      setSelectedConversation(pendingConversation);
-      startSession(pendingConversation);
+  const handleStartSession = useCallback(() => {
+    if (selectedConversation) {
+      startSession(selectedConversation);
     }
-    setPendingConversation(null);
-  }, [pendingConversation, selectedConversation, startSession]);
+  }, [selectedConversation, startSession]);
 
   // Get linked complaint for AI triage
   const selectedQueueItem = queueItems.find(item => item.id === selectedConversation);
@@ -119,7 +103,7 @@ export default function Atendimento() {
   }, [selectedConversation, queueItems, linkedComplaint]);
 
   const handleForward = async (stepId: string, notes: string, summary?: string, complaintType?: string) => {
-    // Update complaint type if changed
+    // Se já tem complaint, atualizar tipo se necessário
     if (complaintType && selectedQueueItem?.complaint_id) {
       await import("@/integrations/supabase/client").then(async ({ supabase }) => {
         await supabase
@@ -129,9 +113,28 @@ export default function Atendimento() {
       });
     }
 
-    const success = await forwardToStep(stepId, notes, summary);
+    const success = await forwardToStep(
+      stepId,
+      notes,
+      summary,
+      selectedConversation || undefined,
+      selectedQueueItem?.complaint_id || undefined,
+      complaintType,
+      selectedQueueItem
+        ? {
+            customer_name: selectedQueueItem.customer_name,
+            customer_email: selectedQueueItem.customer_email,
+            customer_phone: selectedQueueItem.customer_phone,
+            subject: selectedQueueItem.subject,
+            last_message: selectedQueueItem.last_message,
+            channel: selectedQueueItem.channel,
+            whatsapp_conversation_id: selectedQueueItem.whatsapp_conversation_id,
+          }
+        : undefined,
+    );
     if (success) {
       toast.success("Atendimento encaminhado com sucesso!");
+      setSelectedConversation(null);
     } else {
       toast.error("Erro ao encaminhar atendimento");
     }
@@ -188,6 +191,7 @@ export default function Atendimento() {
                 onForward={handleForward}
                 onEndSession={handleEndSession}
                 hasActiveSession={isSessionActive}
+                onStartSession={handleStartSession}
               />
             </>
           ) : (
@@ -210,18 +214,6 @@ export default function Atendimento() {
         )}
       </div>
       </div>
-      {/* Countdown Dialog */}
-      <ServiceCountdownDialog
-        open={showCountdown}
-        countdownSeconds={countdownSeconds}
-        onStart={handleCountdownStart}
-        onClose={handleCountdownClose}
-        customerName={
-          pendingConversation
-            ? queueItems.find((q) => q.id === pendingConversation)?.customer_name || undefined
-            : undefined
-        }
-      />
     </MainLayout>
   );
 }

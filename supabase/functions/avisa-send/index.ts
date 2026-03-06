@@ -1,25 +1,22 @@
 /**
- * avisa-send — Envia mensagem do agente via AvisaAPI e registra no banco
+ * avisa-send — Envia mensagem do agente via AvisaAPI
  *
- * Chamado pelo frontend (ConversationView) quando um atendente humano
- * digita e envia uma mensagem em uma conversa WhatsApp.
+ * Chamado pelo frontend quando um atendente envia mensagem em conversa WhatsApp.
  *
- * Requer autenticação JWT do Supabase (usuário logado).
+ * Endpoint AvisaAPI:
+ *   POST https://www.avisaapi.com.br/api/actions/sendMessage
+ *   Authorization: Bearer <AVISA_API_TOKEN>
+ *   Body: { number: "5499999999", message: "Texto" }
  *
  * Payload esperado:
  * {
- *   whatsapp_conversation_id: "uuid",    // ID da conversa
- *   content: "Texto da mensagem",        // mensagem a enviar
- *   agent_name?: "Nome do Atendente"     // opcional, para exibição
+ *   whatsapp_conversation_id: "uuid",
+ *   content: "Texto da mensagem",
+ *   agent_name?: "Nome do Atendente"
  * }
  *
- * Variáveis de ambiente necessárias:
- *   AVISA_API_URL    — URL base da AvisaAPI (ex: https://api.avisaapi.com.br)
- *   AVISA_API_KEY    — Chave de autenticação da AvisaAPI
- *   AVISA_INSTANCE   — Nome da instância/número na AvisaAPI (se necessário)
- *
- * ATENÇÃO: Ajuste o endpoint e o formato do body no bloco "Enviar via AvisaAPI"
- * conforme a documentação específica da sua AvisaAPI.
+ * Variável de ambiente necessária:
+ *   AVISA_API_TOKEN — Bearer token da AvisaAPI
  */
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 
@@ -29,6 +26,8 @@ const corsHeaders = {
     "authorization, x-client-info, apikey, content-type",
 };
 
+const AVISA_API_ENDPOINT = "https://www.avisaapi.com.br/api/actions/sendMessage";
+
 Deno.serve(async (req) => {
   if (req.method === "OPTIONS") {
     return new Response(null, { headers: corsHeaders });
@@ -37,9 +36,7 @@ Deno.serve(async (req) => {
   try {
     const SUPABASE_URL = Deno.env.get("SUPABASE_URL")!;
     const SUPABASE_SERVICE_ROLE_KEY = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
-    const AVISA_API_URL = Deno.env.get("AVISA_API_URL");
-    const AVISA_API_KEY = Deno.env.get("AVISA_API_KEY");
-    const AVISA_INSTANCE = Deno.env.get("AVISA_INSTANCE");
+    const AVISA_API_TOKEN = Deno.env.get("AVISA_API_TOKEN");
 
     const supabase = createClient(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY);
 
@@ -52,9 +49,7 @@ Deno.serve(async (req) => {
 
     if (!whatsapp_conversation_id || !content) {
       return new Response(
-        JSON.stringify({
-          error: "Campos obrigatórios: whatsapp_conversation_id e content",
-        }),
+        JSON.stringify({ error: "Campos obrigatórios: whatsapp_conversation_id e content" }),
         { status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" } }
       );
     }
@@ -73,64 +68,45 @@ Deno.serve(async (req) => {
       );
     }
 
-    // ---------------------------------------------------------------
-    // Enviar via AvisaAPI (se configurado)
-    // Ajuste o endpoint e o body conforme a documentação da AvisaAPI
-    // ---------------------------------------------------------------
+    // Enviar via AvisaAPI
     let externalMessageId: string | null = null;
-    let sendStatus: "sent" | "pending" = "pending";
+    let sendStatus: "sent" | "failed" = "failed";
 
-    if (AVISA_API_URL && AVISA_API_KEY) {
-      try {
-        // TODO: Ajuste o endpoint e o formato conforme documentação da AvisaAPI
-        const sendResponse = await fetch(
-          `${AVISA_API_URL}/message/send`,
-          {
-            method: "POST",
-            headers: {
-              "Content-Type": "application/json",
-              "Authorization": `Bearer ${AVISA_API_KEY}`,
-              // Algumas APIs usam header diferente:
-              // "apikey": AVISA_API_KEY,
-            },
-            body: JSON.stringify({
-              phone: conversation.phone_number,
-              message: content,
-              // Inclua outros campos se necessário:
-              // instance: AVISA_INSTANCE,
-              // type: "text",
-            }),
-          }
-        );
-
-        if (sendResponse.ok) {
-          const result = await sendResponse.json();
-          externalMessageId =
-            result.id ?? result.message_id ?? result.data?.id ?? null;
-          sendStatus = "sent";
-          console.log("avisa-send: mensagem enviada via AvisaAPI:", result);
-        } else {
-          const errText = await sendResponse.text();
-          console.error(
-            "avisa-send: AvisaAPI retornou erro:",
-            sendResponse.status,
-            errText
-          );
-          // Salvar com status "pending" para rastreabilidade
-        }
-      } catch (sendErr) {
-        console.error("avisa-send: falha na chamada AvisaAPI:", sendErr);
-        // Salvar com status "pending" mesmo que o envio falhe
-      }
-    } else {
-      console.log(
-        "avisa-send: AVISA_API_URL/AVISA_API_KEY não configurados — salvando apenas no banco"
+    if (!AVISA_API_TOKEN) {
+      console.error("avisa-send: AVISA_API_TOKEN não configurado");
+      return new Response(
+        JSON.stringify({ error: "AVISA_API_TOKEN não configurado no servidor" }),
+        { status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" } }
       );
     }
 
-    // ---------------------------------------------------------------
+    try {
+      const sendResponse = await fetch(AVISA_API_ENDPOINT, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "Authorization": `Bearer ${AVISA_API_TOKEN}`,
+        },
+        body: JSON.stringify({
+          number: conversation.phone_number,
+          message: content,
+        }),
+      });
+
+      const result = await sendResponse.json();
+      console.log("avisa-send: resposta AvisaAPI:", JSON.stringify(result));
+
+      if (sendResponse.ok) {
+        externalMessageId = result.id ?? result.message_id ?? null;
+        sendStatus = "sent";
+      } else {
+        console.error("avisa-send: AvisaAPI erro:", sendResponse.status, result);
+      }
+    } catch (sendErr) {
+      console.error("avisa-send: falha na chamada AvisaAPI:", sendErr);
+    }
+
     // Salvar mensagem do agente em whatsapp_messages
-    // ---------------------------------------------------------------
     const { data: message, error: msgError } = await supabase
       .from("whatsapp_messages")
       .insert({
@@ -165,10 +141,7 @@ Deno.serve(async (req) => {
       .eq("whatsapp_conversation_id", whatsapp_conversation_id)
       .in("status", ["waiting", "in_progress"]);
 
-    console.log(
-      "avisa-send: mensagem do agente registrada, message_id:",
-      message.id
-    );
+    console.log("avisa-send: mensagem registrada, message_id:", message.id, "status:", sendStatus);
 
     return new Response(
       JSON.stringify({
@@ -182,10 +155,7 @@ Deno.serve(async (req) => {
     console.error("avisa-send error:", error);
     return new Response(
       JSON.stringify({ error: error.message }),
-      {
-        status: 500,
-        headers: { ...corsHeaders, "Content-Type": "application/json" },
-      }
+      { status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" } }
     );
   }
 });

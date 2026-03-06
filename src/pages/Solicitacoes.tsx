@@ -213,7 +213,7 @@ export default function Solicitacoes() {
                     className={`cursor-pointer hover:bg-muted/50 ${complaint.status === "novo" ? "font-semibold bg-yellow-50/50 dark:bg-yellow-950/10" : ""}`}
                     onClick={() => handleViewDetails(complaint.id)}
                   >
-                    <TableCell className="font-mono text-sm font-medium text-primary">
+                    <TableCell className="font-mono text-sm font-medium text-black">
                       {complaint.protocol_number}
                     </TableCell>
                     <TableCell>

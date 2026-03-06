@@ -1,5 +1,5 @@
 import { useNavigate, Link } from "react-router-dom";
-import { Bell, Search, User, LogOut, Settings, Circle } from "lucide-react";
+import { Bell, Search, User, LogOut, Settings } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { 
   DropdownMenu, 
@@ -14,25 +14,10 @@ import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { Badge } from "@/components/ui/badge";
 import { useAuth } from "@/contexts/AuthContext";
 import { useRole } from "@/hooks/useRole";
-import { cn } from "@/lib/utils";
-
-const statusColors = {
-  online: "bg-green-500",
-  offline: "bg-gray-400",
-  busy: "bg-red-500",
-  break: "bg-yellow-500",
-};
-
-const statusLabels = {
-  online: "Online",
-  offline: "Offline",
-  busy: "Ocupado",
-  break: "Pausa",
-};
 
 export function Header() {
-  const { user, profile, signOut, updateStatus } = useAuth();
-  const { role, isAdmin, isAtendente } = useRole();
+  const { user, profile, signOut } = useAuth();
+  const { isAdmin } = useRole();
   const navigate = useNavigate();
 
   const handleSignOut = async () => {
@@ -40,13 +25,8 @@ export function Header() {
     navigate('/login');
   };
 
-  const handleStatusChange = async (status: 'online' | 'offline' | 'busy' | 'break') => {
-    await updateStatus(status);
-  };
-
   const displayName = profile?.full_name || user?.email?.split('@')[0] || 'Usuário';
   const initials = displayName.split(' ').map(n => n[0]).join('').toUpperCase().slice(0, 2);
-  const currentStatus = profile?.status || 'offline';
 
   return (
     <header className="border-b bg-white">
@@ -59,38 +39,6 @@ export function Header() {
         </div>
 
         <div className="flex items-center gap-4">
-          {/* Status indicator for attendants */}
-          {isAtendente && (
-            <DropdownMenu>
-              <DropdownMenuTrigger asChild>
-                <Button variant="ghost" size="sm" className="gap-2">
-                  <Circle className={cn("h-3 w-3 fill-current", statusColors[currentStatus])} />
-                  <span className="text-sm">{statusLabels[currentStatus]}</span>
-                </Button>
-              </DropdownMenuTrigger>
-              <DropdownMenuContent align="end">
-                <DropdownMenuLabel>Alterar status</DropdownMenuLabel>
-                <DropdownMenuSeparator />
-                <DropdownMenuItem onClick={() => handleStatusChange('online')}>
-                  <Circle className="h-3 w-3 fill-current text-green-500 mr-2" />
-                  Online
-                </DropdownMenuItem>
-                <DropdownMenuItem onClick={() => handleStatusChange('busy')}>
-                  <Circle className="h-3 w-3 fill-current text-red-500 mr-2" />
-                  Ocupado
-                </DropdownMenuItem>
-                <DropdownMenuItem onClick={() => handleStatusChange('break')}>
-                  <Circle className="h-3 w-3 fill-current text-yellow-500 mr-2" />
-                  Pausa
-                </DropdownMenuItem>
-                <DropdownMenuItem onClick={() => handleStatusChange('offline')}>
-                  <Circle className="h-3 w-3 fill-current text-gray-400 mr-2" />
-                  Offline
-                </DropdownMenuItem>
-              </DropdownMenuContent>
-            </DropdownMenu>
-          )}
-
           {/* Notifications */}
           <DropdownMenu>
             <DropdownMenuTrigger asChild>

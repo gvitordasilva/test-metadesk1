@@ -410,7 +410,7 @@ export function ComplaintDetailModal({
       <DialogContent className="max-w-3xl max-h-[90vh] overflow-y-auto">
         <DialogHeader>
           <DialogTitle className="flex items-center gap-3">
-            <span className="font-mono text-primary">
+            <span className="font-mono text-black">
               {complaint.protocol_number}
             </span>
             <ComplaintTypeBadge type={complaint.type} />

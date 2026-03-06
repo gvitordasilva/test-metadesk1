@@ -25,6 +25,7 @@ import {
   Download,
   X,
   MessageSquare,
+  Play,
 } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { ConversationToolbar } from "./ConversationToolbar";
@@ -73,6 +74,7 @@ type TimelineEntry = {
   content: string;
   sender_type: "customer" | "bot" | "agent" | "system";
   created_at: string;
+  content_type?: string;
   metadata?: {
     action?: string;
     field_changed?: string;
@@ -88,6 +90,7 @@ type ConversationViewProps = {
   onForward?: (stepId: string, notes: string, summary?: string, complaintType?: string) => Promise<boolean>;
   onEndSession?: () => void;
   hasActiveSession?: boolean;
+  onStartSession?: () => void;
 };
 
 export function ConversationView({
@@ -95,6 +98,7 @@ export function ConversationView({
   onForward,
   onEndSession,
   hasActiveSession = false,
+  onStartSession,
 }: ConversationViewProps) {
   const [newMessage, setNewMessage] = useState("");
   const [activeMode, setActiveMode] = useState<ToolbarMode>("chat");
@@ -251,6 +255,7 @@ export function ConversationView({
       content: m.content,
       sender_type: m.sender_type as TimelineEntry["sender_type"],
       created_at: m.created_at,
+      content_type: m.content_type,
     }));
   }, [isWhatsAppN8n, whatsAppMsgs]);
 
@@ -679,7 +684,7 @@ export function ConversationView({
 
   const getSenderLabel = (senderType: string) => {
     switch (senderType) {
-      case "bot": return isWhatsAppN8n ? "n8n Bot" : "Max (Bot)";
+      case "bot": return "Bot";
       case "agent": return "Atendente";
       default: return queueItem?.customer_name || "Cliente";
     }
@@ -744,7 +749,7 @@ export function ConversationView({
                     className="text-[10px] px-1.5 py-0 h-4 border-[#25D366] text-[#25D366] flex items-center gap-1"
                   >
                     <MessageSquare className="h-2.5 w-2.5" />
-                    n8n
+                    WhatsApp
                   </Badge>
                 )}
               </div>
@@ -818,7 +823,9 @@ export function ConversationView({
                           key={entry.id}
                           className={cn(
                             "flex",
-                            entry.sender_type === "agent" ? "justify-end" : "justify-start"
+                            (entry.sender_type === "agent" || entry.sender_type === "bot")
+                              ? "justify-end"
+                              : "justify-start"
                           )}
                         >
                           <div
@@ -827,7 +834,7 @@ export function ConversationView({
                               entry.sender_type === "agent"
                                 ? "bg-primary text-primary-foreground"
                                 : entry.sender_type === "bot"
-                                ? "bg-accent"
+                                ? "bg-amber-100 text-foreground"
                                 : "bg-muted"
                             )}
                           >
@@ -843,7 +850,19 @@ export function ConversationView({
                                 })}
                               </span>
                             </div>
-                            {renderContent(entry.content)}
+                            {entry.sender_type === "customer" &&
+                            (entry.content_type === "list_response" ||
+                              entry.content_type === "buttons_response" ||
+                              entry.content_type === "button_response") ? (
+                              <div>
+                                <p className="text-[10px] text-muted-foreground mb-1 font-medium">
+                                  Selecionou a opção
+                                </p>
+                                {renderContent(entry.content)}
+                              </div>
+                            ) : (
+                              renderContent(entry.content)
+                            )}
                           </div>
                         </div>
                       )
@@ -853,91 +872,102 @@ export function ConversationView({
               </div>
 
               <div className="border-t p-4">
-                {/* Pending file preview */}
-                {pendingFile && (
-                  <div className="mb-3 p-3 border rounded-lg bg-muted/30 flex items-center gap-3">
-                    {pendingFile.previewUrl ? (
-                      <img src={pendingFile.previewUrl} alt="Preview" className="h-16 w-16 object-cover rounded-md" />
-                    ) : (
-                      <div className="h-16 w-16 rounded-md bg-muted flex items-center justify-center">
-                        <FileIcon className="h-6 w-6 text-muted-foreground" />
+                {hasActiveSession ? (
+                  <>
+                    {pendingFile && (
+                      <div className="mb-3 p-3 border rounded-lg bg-muted/30 flex items-center gap-3">
+                        {pendingFile.previewUrl ? (
+                          <img src={pendingFile.previewUrl} alt="Preview" className="h-16 w-16 object-cover rounded-md" />
+                        ) : (
+                          <div className="h-16 w-16 rounded-md bg-muted flex items-center justify-center">
+                            <FileIcon className="h-6 w-6 text-muted-foreground" />
+                          </div>
+                        )}
+                        <div className="flex-1 min-w-0">
+                          <p className="text-sm font-medium truncate">{pendingFile.file.name}</p>
+                          <p className="text-xs text-muted-foreground">
+                            {(pendingFile.file.size / 1024).toFixed(1)} KB
+                          </p>
+                        </div>
+                        <Button variant="ghost" size="icon" onClick={cancelPendingFile} className="flex-shrink-0">
+                          <X className="h-4 w-4" />
+                        </Button>
+                        <Button onClick={sendFile} disabled={isUploading} size="sm" className="flex-shrink-0">
+                          {isUploading ? <Loader2 className="h-4 w-4 animate-spin mr-1" /> : <Send className="h-4 w-4 mr-1" />}
+                          Enviar
+                        </Button>
                       </div>
                     )}
-                    <div className="flex-1 min-w-0">
-                      <p className="text-sm font-medium truncate">{pendingFile.file.name}</p>
-                      <p className="text-xs text-muted-foreground">
-                        {(pendingFile.file.size / 1024).toFixed(1)} KB
-                      </p>
+
+                    <input
+                      ref={fileInputRef}
+                      type="file"
+                      className="hidden"
+                      onChange={handleFileSelect}
+                      accept="image/*,.pdf,.doc,.docx,.xls,.xlsx,.ppt,.pptx,.txt,.csv,.zip,.rar"
+                    />
+
+                    <div className="flex gap-2">
+                      <Textarea
+                        placeholder="Digite sua mensagem..."
+                        className="min-h-[60px]"
+                        value={newMessage}
+                        onChange={(e) => setNewMessage(e.target.value)}
+                        onKeyDown={(e) => {
+                          if (e.key === "Enter" && !e.shiftKey) {
+                            e.preventDefault();
+                            handleSend();
+                          }
+                        }}
+                        disabled={isSending}
+                      />
+                      <div className="flex flex-col gap-2">
+                        <TooltipProvider>
+                          <Tooltip>
+                            <TooltipTrigger asChild>
+                              <Button variant="outline" size="icon" onClick={() => fileInputRef.current?.click()}>
+                                <Paperclip className="h-4 w-4" />
+                              </Button>
+                            </TooltipTrigger>
+                            <TooltipContent>Anexar arquivo</TooltipContent>
+                          </Tooltip>
+                          
+                          <Tooltip>
+                            <TooltipTrigger asChild>
+                              <Button variant="outline" size="icon">
+                                <Smile className="h-4 w-4" />
+                              </Button>
+                            </TooltipTrigger>
+                            <TooltipContent>Emoji</TooltipContent>
+                          </Tooltip>
+                          
+                          <Tooltip>
+                            <TooltipTrigger asChild>
+                              <Button onClick={handleSend} disabled={isSending || !newMessage.trim()}>
+                                {isSending ? (
+                                  <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+                                ) : (
+                                  <Send className="h-4 w-4 mr-2" />
+                                )}
+                                Enviar
+                              </Button>
+                            </TooltipTrigger>
+                            <TooltipContent>Enviar mensagem</TooltipContent>
+                          </Tooltip>
+                        </TooltipProvider>
+                      </div>
                     </div>
-                    <Button variant="ghost" size="icon" onClick={cancelPendingFile} className="flex-shrink-0">
-                      <X className="h-4 w-4" />
-                    </Button>
-                    <Button onClick={sendFile} disabled={isUploading} size="sm" className="flex-shrink-0">
-                      {isUploading ? <Loader2 className="h-4 w-4 animate-spin mr-1" /> : <Send className="h-4 w-4 mr-1" />}
-                      Enviar
-                    </Button>
-                  </div>
+                  </>
+                ) : (
+                  <Button
+                    onClick={onStartSession}
+                    className="w-full h-12 text-base"
+                    size="lg"
+                  >
+                    <Play className="h-5 w-5 mr-2" />
+                    Iniciar Atendimento
+                  </Button>
                 )}
-
-                {/* Hidden file input */}
-                <input
-                  ref={fileInputRef}
-                  type="file"
-                  className="hidden"
-                  onChange={handleFileSelect}
-                  accept="image/*,.pdf,.doc,.docx,.xls,.xlsx,.ppt,.pptx,.txt,.csv,.zip,.rar"
-                />
-
-                <div className="flex gap-2">
-                  <Textarea
-                    placeholder="Digite sua mensagem..."
-                    className="min-h-[60px]"
-                    value={newMessage}
-                    onChange={(e) => setNewMessage(e.target.value)}
-                    onKeyDown={(e) => {
-                      if (e.key === "Enter" && !e.shiftKey) {
-                        e.preventDefault();
-                        handleSend();
-                      }
-                    }}
-                    disabled={isSending}
-                  />
-                  <div className="flex flex-col gap-2">
-                    <TooltipProvider>
-                      <Tooltip>
-                        <TooltipTrigger asChild>
-                          <Button variant="outline" size="icon" onClick={() => fileInputRef.current?.click()}>
-                            <Paperclip className="h-4 w-4" />
-                          </Button>
-                        </TooltipTrigger>
-                        <TooltipContent>Anexar arquivo</TooltipContent>
-                      </Tooltip>
-                      
-                      <Tooltip>
-                        <TooltipTrigger asChild>
-                          <Button variant="outline" size="icon">
-                            <Smile className="h-4 w-4" />
-                          </Button>
-                        </TooltipTrigger>
-                        <TooltipContent>Emoji</TooltipContent>
-                      </Tooltip>
-                      
-                      <Tooltip>
-                        <TooltipTrigger asChild>
-                          <Button onClick={handleSend} disabled={isSending || !newMessage.trim()}>
-                            {isSending ? (
-                              <Loader2 className="h-4 w-4 mr-2 animate-spin" />
-                            ) : (
-                              <Send className="h-4 w-4 mr-2" />
-                            )}
-                            Enviar
-                          </Button>
-                        </TooltipTrigger>
-                        <TooltipContent>Enviar mensagem</TooltipContent>
-                      </Tooltip>
-                    </TooltipProvider>
-                  </div>
-                </div>
               </div>
             </>
           )}

@@ -80,6 +80,42 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     }
   };
 
+  // Cria ou atualiza o perfil de atendente (necessário para usuários sem registro em attendant_profiles)
+  const ensureAttendantProfile = async (
+    userId: string,
+    email: string,
+    fullName?: string,
+    initialStatus: AttendantProfile['status'] = 'online'
+  ): Promise<AttendantProfile | null> => {
+    try {
+      const { data, error } = await supabase
+        .from('attendant_profiles')
+        .upsert(
+          {
+            user_id: userId,
+            email,
+            full_name: fullName || email.split('@')[0] || 'Atendente',
+            status: initialStatus,
+            working_hours: { start: '09:00', end: '18:00' },
+            updated_at: new Date().toISOString(),
+          },
+          { onConflict: 'user_id' }
+        )
+        .select()
+        .single();
+
+      if (error) {
+        console.error('Error ensuring attendant profile:', error);
+        return null;
+      }
+
+      return data as unknown as AttendantProfile;
+    } catch (error) {
+      console.error('Error ensuring attendant profile:', error);
+      return null;
+    }
+  };
+
   // Initialize auth state
   useEffect(() => {
     // Set up auth state listener FIRST
@@ -94,8 +130,20 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
             const userRole = await fetchUserRole(currentSession.user.id);
             setRole(userRole);
             
-            const userProfile = await fetchProfile(currentSession.user.id);
-            setProfile(userProfile);
+            let userProfile = await fetchProfile(currentSession.user.id);
+            // Criar perfil se não existir (atendente sem attendant_profile)
+            if (!userProfile && userRole === 'atendente') {
+              const u = currentSession.user;
+              userProfile = await ensureAttendantProfile(
+                u.id,
+                u.email!,
+                u.user_metadata?.full_name as string | undefined,
+                'online'
+              );
+              setProfile(userProfile);
+            } else {
+              setProfile(userProfile);
+            }
             
             // Auto-set status to online on login
             if (userProfile && userProfile.status !== 'online') {
@@ -122,14 +170,23 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         setSession(existingSession);
         setUser(existingSession.user);
         
-        Promise.all([
-          fetchUserRole(existingSession.user.id),
-          fetchProfile(existingSession.user.id)
-        ]).then(([userRole, userProfile]) => {
+        (async () => {
+          const userRole = await fetchUserRole(existingSession.user.id);
           setRole(userRole);
+          
+          let userProfile = await fetchProfile(existingSession.user.id);
+          if (!userProfile && userRole === 'atendente') {
+            const u = existingSession.user;
+            userProfile = await ensureAttendantProfile(
+              u.id,
+              u.email!,
+              u.user_metadata?.full_name as string | undefined,
+              'online'
+            );
+          }
           setProfile(userProfile);
           setLoading(false);
-        });
+        })();
       } else {
         setLoading(false);
       }
@@ -201,12 +258,31 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     if (!user) return;
 
     try {
-      await supabase
-        .from('attendant_profiles')
-        .update({ status })
-        .eq('user_id', user.id);
+      // Se não tem perfil, cria primeiro (usuários sem attendant_profile)
+      let updated = profile;
+      if (!profile) {
+        updated = await ensureAttendantProfile(
+          user.id,
+          user.email || '',
+          user.user_metadata?.full_name,
+          status
+        );
+      } else {
+        const { data, error } = await supabase
+          .from('attendant_profiles')
+          .update({ status, updated_at: new Date().toISOString() })
+          .eq('user_id', user.id)
+          .select()
+          .single();
 
-      setProfile(prev => prev ? { ...prev, status } : null);
+        if (error) {
+          console.error('Error updating status:', error);
+          return;
+        }
+        updated = data as unknown as AttendantProfile;
+      }
+
+      if (updated) setProfile({ ...updated, status });
     } catch (error) {
       console.error('Error updating status:', error);
     }

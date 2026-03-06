@@ -60,6 +60,37 @@ type CaseInfoPanelProps = {
   tmaSla?: { target: number; warning: number | null; critical: number | null };
 };
 
+function translateStatus(status: string): string {
+  const map: Record<string, string> = {
+    pending: "Pendente",
+    waiting: "Pendente",
+    new: "Novo",
+    assigned: "Em Atendimento",
+    in_progress: "Em Atendimento",
+    completed: "Finalizado",
+    resolved: "Finalizado",
+    forwarded: "Encaminhado",
+  };
+  return map[status] || status;
+}
+
+function formatPhone(raw: string): string {
+  const digits = raw.replace(/\D/g, "");
+  if (digits.length === 13) {
+    return `+${digits.slice(0, 2)} (${digits.slice(2, 4)}) ${digits.slice(4, 9)}-${digits.slice(9)}`;
+  }
+  if (digits.length === 12) {
+    return `+${digits.slice(0, 2)} (${digits.slice(2, 4)}) ${digits.slice(4, 8)}-${digits.slice(8)}`;
+  }
+  if (digits.length === 11) {
+    return `(${digits.slice(0, 2)}) ${digits.slice(2, 7)}-${digits.slice(7)}`;
+  }
+  if (digits.length === 10) {
+    return `(${digits.slice(0, 2)}) ${digits.slice(2, 6)}-${digits.slice(6)}`;
+  }
+  return raw;
+}
+
 export function CaseInfoPanel({
   caseData,
   formattedDuration,
@@ -110,17 +141,11 @@ export function CaseInfoPanel({
         <div className="p-4 space-y-6">
           {/* Avatar e Nome */}
           <div className="flex flex-col items-center text-center">
-            {caseData.client.avatar ? (
-              <img
-                src={caseData.client.avatar}
-                alt={caseData.client.name}
-                className="w-16 h-16 rounded-full mb-2 object-cover"
-              />
-            ) : (
-              <div className="w-16 h-16 rounded-full bg-primary/10 flex items-center justify-center mb-2">
-                <User className="h-8 w-8 text-primary" />
-              </div>
-            )}
+            <div className="w-16 h-16 rounded-full bg-muted flex items-center justify-center mb-2">
+              <span className="text-xl font-medium text-muted-foreground">
+                {caseData.client.name.charAt(0).toUpperCase()}
+              </span>
+            </div>
             <h4 className="font-medium">{caseData.client.name}</h4>
             {caseData.protocol && (
               <p className="text-sm text-muted-foreground">
@@ -139,34 +164,24 @@ export function CaseInfoPanel({
                   <FileText className="h-4 w-4" />
                   Resumo do Caso
                 </h4>
-                <div className="space-y-2">
+                <div className="flex items-center gap-2 flex-wrap">
                   {caseData.type && (
-                    <div className="flex items-center gap-2">
-                      <Badge variant="outline">{caseData.type}</Badge>
-                      {caseData.category && (
-                        <Badge variant="secondary">{caseData.category}</Badge>
-                      )}
-                    </div>
+                    <Badge variant="outline">{caseData.type}</Badge>
                   )}
                   {caseData.status && (
                     <Badge
                       className={
-                        caseData.status === "novo"
-                          ? "bg-blue-500"
-                          : caseData.status === "em_andamento"
-                          ? "bg-yellow-500"
-                          : caseData.status === "concluido"
-                          ? "bg-green-500"
-                          : "bg-gray-500"
+                        caseData.status === "pending" || caseData.status === "waiting" || caseData.status === "new"
+                          ? "bg-amber-500 text-white"
+                          : caseData.status === "in_progress" || caseData.status === "assigned"
+                          ? "bg-blue-500 text-white"
+                          : caseData.status === "completed" || caseData.status === "resolved"
+                          ? "bg-green-500 text-white"
+                          : "bg-gray-500 text-white"
                       }
                     >
-                      {caseData.status}
+                      {translateStatus(caseData.status)}
                     </Badge>
-                  )}
-                  {caseData.description && (
-                    <p className="text-sm text-muted-foreground line-clamp-3">
-                      {caseData.description}
-                    </p>
                   )}
                 </div>
               </div>
@@ -244,7 +259,7 @@ export function CaseInfoPanel({
               {caseData.client.phone && (
                 <div className="flex items-center gap-2">
                   <Phone className="h-4 w-4 text-muted-foreground" />
-                  <span>{caseData.client.phone}</span>
+                  <span>{formatPhone(caseData.client.phone)}</span>
                 </div>
               )}
               {caseData.client.cpf && (

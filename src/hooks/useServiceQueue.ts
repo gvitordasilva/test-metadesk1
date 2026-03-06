@@ -1,5 +1,5 @@
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { useEffect } from "react";
+import { useEffect, useRef } from "react";
 import { supabase } from "@/integrations/supabase/client";
 
 export type ServiceQueueChannel = "web" | "voice" | "whatsapp" | "email" | "chat" | "phone";
@@ -68,29 +68,40 @@ export function useServiceQueue(filters?: QueueFilters) {
 
       return (data || []) as unknown as ServiceQueueItem[];
     },
-    refetchInterval: 30000,
+    refetchInterval: 5000,
     retry: (failureCount, error: any) => {
       if (error?.code === "PGRST205") return false;
       return failureCount < 3;
     },
   });
 
-  // Realtime subscription
+  // Realtime subscription — canal com nome único para evitar colisão entre instâncias
+  const channelRef = useRef<ReturnType<typeof supabase.channel> | null>(null);
+
   useEffect(() => {
+    const channelName = `service-queue-changes-${Math.random().toString(36).slice(2)}`;
+
     const channel = supabase
-      .channel("service-queue-changes")
+      .channel(channelName)
       .on(
         "postgres_changes",
         { event: "*", schema: "public", table: "service_queue" },
-        (payload) => {
-          console.log("Service queue update:", payload);
+        () => {
           queryClient.invalidateQueries({ queryKey: ["service-queue"] });
         }
       )
-      .subscribe();
+      .subscribe((status) => {
+        if (status === "CHANNEL_ERROR" || status === "TIMED_OUT") {
+          console.warn("useServiceQueue: realtime error, forcing refetch. status:", status);
+          queryClient.invalidateQueries({ queryKey: ["service-queue"] });
+        }
+      });
+
+    channelRef.current = channel;
 
     return () => {
       supabase.removeChannel(channel);
+      channelRef.current = null;
     };
   }, [queryClient]);
 
