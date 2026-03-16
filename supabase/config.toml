@@ -41,3 +41,7 @@ verify_jwt = false
 # JWT desabilitado: função usa service_role internamente; chamada só ocorre via frontend autenticado
 [functions.avisa-send]
 verify_jwt = false
+
+# Painel Integrações: QR / status / desconectar instância WhatsApp na AvisaAPI (usa mesmo Bearer)
+[functions.avisa-instance]
+verify_jwt = false

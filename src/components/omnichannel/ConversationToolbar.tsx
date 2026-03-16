@@ -95,22 +95,24 @@ export function ConversationToolbar({
             <TooltipContent>Encaminhar para outro setor</TooltipContent>
           </Tooltip>
 
-          {hasActiveSession && (
-            <Tooltip>
-              <TooltipTrigger asChild>
-                <Button
-                  variant="outline"
-                  size="sm"
-                  className="gap-2 border-green-500/50 text-green-600 hover:text-green-700 hover:bg-green-500/10"
-                  onClick={onEndSession}
-                >
-                  <CheckCircle className="h-4 w-4" />
-                  <span className="hidden sm:inline">Finalizar</span>
-                </Button>
-              </TooltipTrigger>
-              <TooltipContent>Finalizar atendimento</TooltipContent>
-            </Tooltip>
-          )}
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <Button
+                variant="outline"
+                size="sm"
+                className="gap-2 border-green-500/50 text-green-600 hover:text-green-700 hover:bg-green-500/10"
+                onClick={onEndSession}
+              >
+                <CheckCircle className="h-4 w-4" />
+                <span className="hidden sm:inline">Finalizar</span>
+              </Button>
+            </TooltipTrigger>
+            <TooltipContent>
+              {hasActiveSession
+                ? "Finalizar atendimento"
+                : "Finalizar e remover da fila (sem sessão iniciada)"}
+            </TooltipContent>
+          </Tooltip>
         </TooltipProvider>
       </div>
     </div>

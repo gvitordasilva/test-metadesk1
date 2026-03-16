@@ -5,7 +5,7 @@
  *
  * Endpoint AvisaAPI:
  *   POST https://www.avisaapi.com.br/api/actions/sendMessage
- *   Authorization: Bearer <AVISA_API_TOKEN>
+ *   Authorization: Bearer <AVISA_API_KEY>
  *   Body: { number: "5499999999", message: "Texto" }
  *
  * Payload esperado:
@@ -16,7 +16,8 @@
  * }
  *
  * Variável de ambiente necessária:
- *   AVISA_API_TOKEN — Bearer token da AvisaAPI
+ *   AVISA_API_KEY — Bearer token da AvisaAPI (preferencial)
+ *   AVISA_API_TOKEN — fallback legado
  */
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 
@@ -36,9 +37,18 @@ Deno.serve(async (req) => {
   try {
     const SUPABASE_URL = Deno.env.get("SUPABASE_URL")!;
     const SUPABASE_SERVICE_ROLE_KEY = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
-    const AVISA_API_TOKEN = Deno.env.get("AVISA_API_TOKEN");
-
     const supabase = createClient(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY);
+
+    let avisaApiKey =
+      Deno.env.get("AVISA_API_KEY") || Deno.env.get("AVISA_API_TOKEN");
+    if (!avisaApiKey) {
+      const { data } = await supabase
+        .from("integration_settings")
+        .select("value")
+        .eq("key", "avisa_api_token")
+        .maybeSingle();
+      avisaApiKey = data?.value || undefined;
+    }
 
     const body = await req.json();
     const {
@@ -72,10 +82,10 @@ Deno.serve(async (req) => {
     let externalMessageId: string | null = null;
     let sendStatus: "sent" | "failed" = "failed";
 
-    if (!AVISA_API_TOKEN) {
-      console.error("avisa-send: AVISA_API_TOKEN não configurado");
+    if (!avisaApiKey) {
+      console.error("avisa-send: AVISA_API_KEY / AVISA_API_TOKEN não configurado");
       return new Response(
-        JSON.stringify({ error: "AVISA_API_TOKEN não configurado no servidor" }),
+        JSON.stringify({ error: "AVISA_API_KEY não configurado no servidor" }),
         { status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" } }
       );
     }
@@ -85,7 +95,7 @@ Deno.serve(async (req) => {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
-          "Authorization": `Bearer ${AVISA_API_TOKEN}`,
+          "Authorization": `Bearer ${avisaApiKey}`,
         },
         body: JSON.stringify({
           number: conversation.phone_number,

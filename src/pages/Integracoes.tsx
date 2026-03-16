@@ -63,6 +63,7 @@ import {
 import { useToast } from "@/hooks/use-toast";
 import { Separator } from "@/components/ui/separator";
 import { EmailSetupGuide } from "@/components/integrations/EmailSetupGuide";
+import { AvisaInstancePanel } from "@/components/integrations/AvisaInstancePanel";
 import { useRole } from "@/hooks/useRole";
 
 const SUPABASE_PROJECT_ID = "udyjlesjcgxhgdiaptjp";
@@ -228,14 +229,6 @@ const mainTables = [
 
 // Integrações externas reais
 const realIntegrations = [
-  {
-    name: "WhatsApp (Evolution API)",
-    description: "Envio e recebimento de mensagens via WhatsApp Business. Configurado com Evolution API.",
-    status: "configured",
-    icon: <MessageSquare className="h-5 w-5 text-green-500" />,
-    secrets: ["WHATSAPP_ACCESS_TOKEN", "WHATSAPP_PHONE_ID", "WHATSAPP_VERIFY_TOKEN", "EVOLUTION_API_URL", "EVOLUTION_API_KEY", "EVOLUTION_INSTANCE_NAME"],
-    docs: "Webhook configurado em whatsapp-webhook. Envio via whatsapp-send.",
-  },
   {
     name: "ElevenLabs (Agente de Voz)",
     description: "Agente de voz com IA para atendimento via web e telefone (Twilio).",
@@ -781,6 +774,27 @@ const channel = supabase
             <EmailSetupGuide />
 
             <Separator />
+
+            {/* AvisaAPI — conexão WhatsApp por QR (instância única para atendimentos) */}
+            <Card className="border-[#25D366]/30">
+              <CardHeader>
+                <div className="flex items-center justify-between">
+                  <div className="flex items-center gap-3">
+                    <MessageSquare className="h-6 w-6 text-[#25D366]" />
+                    <div>
+                      <CardTitle className="text-base">WhatsApp</CardTitle>
+                    </div>
+                  </div>
+                  <Badge className="bg-green-100 text-green-800 dark:bg-green-900 dark:text-green-200 gap-1">
+                    <Plug className="h-3 w-3" />
+                    Instância AvisaAPI
+                  </Badge>
+                </div>
+              </CardHeader>
+              <CardContent>
+                <AvisaInstancePanel integrationsTabActive={activeTab === "integrations"} />
+              </CardContent>
+            </Card>
 
             <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
               {realIntegrations.map((integration) => (

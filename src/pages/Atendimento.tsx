@@ -1,10 +1,8 @@
 import { useState, useEffect, useMemo, useCallback } from "react";
-import { PanelRight } from "lucide-react";
 import { MainLayout } from "@/components/layout/MainLayout";
 import { ConversationsList } from "@/components/omnichannel/ConversationsList";
 import { ConversationView } from "@/components/omnichannel/ConversationView";
 import { CaseInfoPanel } from "@/components/omnichannel/CaseInfoPanel";
-import { AttendantStatusToggle } from "@/components/omnichannel/AttendantStatusToggle";
 import { useServiceSession } from "@/hooks/useServiceSession";
 import { useServiceQueue } from "@/hooks/useServiceQueue";
 import { useComplaint } from "@/hooks/useComplaints";
@@ -15,7 +13,6 @@ import { toast } from "sonner";
 
 export default function Atendimento() {
   const [selectedConversation, setSelectedConversation] = useState<string | null>(null);
-  const [showCasePanel, setShowCasePanel] = useState(true);
   const [currentSentiment, setCurrentSentiment] = useState<"positive" | "neutral" | "frustrated" | "angry" | null>("neutral");
 
   const tmaSla = useSlaSettingByKey("tma");
@@ -143,9 +140,9 @@ export default function Atendimento() {
 
   const handleEndSession = async () => {
     const success = await endSession();
-    if (success) {
+    // Sem sessão iniciada, endSession() retorna false — ConversationView já marca fila completed; mesmo assim fechamos
+    if (success || !isSessionActive) {
       toast.success("Atendimento finalizado com sucesso!");
-      // Close the chat view after finalizing
       setSelectedConversation(null);
     } else {
       toast.error("Erro ao finalizar atendimento");
@@ -153,15 +150,10 @@ export default function Atendimento() {
   };
 
   return (
-    <MainLayout>
-      <div className="h-[calc(100vh-130px)] overflow-hidden flex flex-col">
-        {/* Status bar */}
-        <div className="flex items-center justify-between px-4 py-2 border-b bg-muted/30">
-          <h2 className="text-sm font-medium text-muted-foreground">Atendimento</h2>
-          <AttendantStatusToggle />
-        </div>
-        
-        <div className="flex-1 overflow-hidden flex border rounded-lg bg-background">
+    <MainLayout mainClassName="flex-1 overflow-hidden flex flex-col min-h-0 p-0">
+      {/* main sem p-6: preenche área útil até a borda do content */}
+      <div className="flex-1 min-h-0 h-full overflow-hidden flex flex-col">
+        <div className="flex-1 min-h-0 overflow-hidden flex border rounded-lg bg-background">
         {/* Lista de conversas */}
         <div className="w-[350px] flex-shrink-0">
           <ConversationsList
@@ -174,18 +166,6 @@ export default function Atendimento() {
         <div className="flex-grow flex flex-col">
           {selectedConversation ? (
             <>
-              {!showCasePanel && (
-                <div className="flex justify-end px-2 pt-2">
-                  <button
-                    onClick={() => setShowCasePanel(true)}
-                    className="flex items-center gap-1.5 text-xs text-muted-foreground hover:text-foreground transition-colors px-2 py-1 rounded-md hover:bg-muted"
-                    title="Exibir painel de informações do caso"
-                  >
-                    <PanelRight className="h-4 w-4" />
-                    <span>Exibir painel</span>
-                  </button>
-                </div>
-              )}
               <ConversationView
                 conversationId={selectedConversation}
                 onForward={handleForward}
@@ -201,18 +181,15 @@ export default function Atendimento() {
           )}
         </div>
 
-        {/* Painel do Caso */}
-        {showCasePanel && (
-          <CaseInfoPanel
-            caseData={currentCase}
-            formattedDuration={formattedDuration}
-            isSessionActive={currentSession?.status === "active"}
-            sentiment={currentSentiment}
-            onClose={() => setShowCasePanel(false)}
-            tmaSla={tmaSla ? { target: tmaSla.target_value, warning: tmaSla.warning_threshold, critical: tmaSla.critical_threshold } : undefined}
-          />
-        )}
-      </div>
+        {/* Painel do Caso (sem botão fechar — sempre visível quando há conversa) */}
+        <CaseInfoPanel
+          caseData={currentCase}
+          formattedDuration={formattedDuration}
+          isSessionActive={currentSession?.status === "active"}
+          sentiment={currentSentiment}
+          tmaSla={tmaSla ? { target: tmaSla.target_value, warning: tmaSla.warning_threshold, critical: tmaSla.critical_threshold } : undefined}
+        />
+        </div>
       </div>
     </MainLayout>
   );

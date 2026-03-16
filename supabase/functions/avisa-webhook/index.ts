@@ -16,6 +16,18 @@ const corsHeaders = {
 
 const AVISA_BASE_URL = "https://www.avisaapi.com.br/api";
 
+/** Chave AvisaAPI: env primeiro; depois integration_settings.avisa_api_token */
+async function resolveAvisaApiKey(supabase: ReturnType<typeof createClient>): Promise<string | undefined> {
+  const env = Deno.env.get("AVISA_API_KEY") || Deno.env.get("AVISA_API_TOKEN");
+  if (env) return env;
+  const { data } = await supabase
+    .from("integration_settings")
+    .select("value")
+    .eq("key", "avisa_api_token")
+    .maybeSingle();
+  return data?.value || undefined;
+}
+
 async function saveOutboundMessage(
   supabaseClient: any,
   conversationId: string,
@@ -146,6 +158,14 @@ async function handleAutoReply(
     }
   };
 
+  /** Linha padrão em toda sublista: só ao tocar aqui o painel libera "Iniciar Atendimento". */
+  const ROW_FALAR_ATENDENTE = {
+    title: "Falar com atendente",
+    desc: "Falar com um atendente humano sobre este assunto.",
+    RowId: "falar_atendente",
+  };
+  const appendFalarAtendente = (list: any[]) => [...list, ROW_FALAR_ATENDENTE];
+
   // ── Menu principal ──────────────────────────────────────────────────
   const mainMenuResponses: Record<string, { text: string; subList?: { desc: string; buttontext: string; list: any[] } }> = {
     faturas: {
@@ -153,14 +173,14 @@ async function handleAutoReply(
       subList: {
         desc: "Selecione o serviço desejado:",
         buttontext: "Ver opções",
-        list: [
+        list: appendFalarAtendente([
           { title: "Pagar Fatura", desc: "Veja contas em aberto e formas de pagamento...", RowId: "pagar_fatura" },
           { title: "Segunda Via", desc: "Baixe sua fatura e veja o histórico...", RowId: "segunda_via" },
           { title: "Parcelamento", desc: "Parcele direto na fatura ou cartão de crédito...", RowId: "parcelamento" },
           { title: "Informar pagamento", desc: "Caso tenha pago a fatura, informe seu pagamento.", RowId: "informar_pagamento" },
           { title: "Fatura Protegida", desc: "Orientações gerais sobre o seguro fatura protegida.", RowId: "fatura_protegida" },
           { title: "Voltar ao menu", desc: "Confira a lista completa de serviços.", RowId: "voltar_menu" },
-        ],
+        ]),
       },
     },
     sem_energia: {
@@ -199,15 +219,58 @@ async function handleAutoReply(
 
   const setSessionState = async (state: string | null) => {
     if (!supabaseClient || !conversationId) return;
+    if (state === null) {
+      // Limpa estado do bot e remove permissão de iniciar atendimento até nova escolha
+      await supabaseClient
+        .from("whatsapp_conversations")
+        .update({ session_data: {} })
+        .eq("id", conversationId);
+      return;
+    }
+    const { data: row } = await supabaseClient
+      .from("whatsapp_conversations")
+      .select("session_data")
+      .eq("id", conversationId)
+      .maybeSingle();
+    const prev = (row?.session_data && typeof row.session_data === "object") ? row.session_data as Record<string, unknown> : {};
     await supabaseClient
       .from("whatsapp_conversations")
-      .update({ session_data: state ? { chatbot_state: state } : {} })
+      .update({
+        session_data: { ...prev, chatbot_state: state },
+      })
+      .eq("id", conversationId);
+  };
+
+  /** Só depois dessa escolha o atendente pode clicar em "Iniciar Atendimento" na mesa. */
+  const setAgentHandoffAllowed = async (allowed: boolean) => {
+    if (!supabaseClient || !conversationId) return;
+    const { data: row } = await supabaseClient
+      .from("whatsapp_conversations")
+      .select("session_data")
+      .eq("id", conversationId)
+      .maybeSingle();
+    const prev = (row?.session_data && typeof row.session_data === "object") ? row.session_data as Record<string, unknown> : {};
+    const next = { ...prev, agent_handoff_allowed: allowed };
+    if (!allowed) delete next.agent_handoff_allowed;
+    await supabaseClient
+      .from("whatsapp_conversations")
+      .update({ session_data: next })
       .eq("id", conversationId);
   };
 
   const id = selectedRowId || selectedButtonId || "";
 
   try {
+    // ── Falar com atendente: libera "Iniciar Atendimento" no painel ──
+    if (id === "falar_atendente") {
+      await sendText(
+        "👤 *Falar com atendente*\n\nPerfeito! Um atendente poderá iniciar o atendimento com você pelo painel em instantes. Aguarde."
+      );
+      await setAgentHandoffAllowed(true);
+      console.log("avisa-webhook: agent_handoff_allowed=true (falar_atendente)");
+      return;
+    }
+
     // ── Pagar Fatura: solicita CPF ──────────────────────────────────
     if (id === "pagar_fatura") {
       await sendText("Certo! Já vou verificar se você possui alguma conta aberta 😉\n\nPor favor me informe o seu CPF ou CNPJ (somente os dígitos):");
@@ -257,17 +320,30 @@ async function handleAutoReply(
       await sendText(entry.text);
       if (entry.subList) {
         await sendList(entry.subList.desc, entry.subList.buttontext, entry.subList.list);
+        await setSessionState(null); // {} — atendente só inicia após "Falar com atendente"
+      } else {
+        await setSessionState(null);
+        await setAgentHandoffAllowed(true); // sem sublista, fluxo já é handoff
       }
-      await setSessionState(null);
       console.log("avisa-webhook: auto-reply enviado para:", id);
       return;
     }
 
-    // Verificar sub-menu Faturas
+    // Sub-menu Faturas (exceto pagar_fatura): não libera atendente até "Falar com atendente"
     if (faturasSubResponses[id]) {
-      await sendText(faturasSubResponses[id]);
+      await sendText(
+        "Para seguir com este serviço com um atendente humano, toque em *Ver opções* e escolha *Falar com atendente*."
+      );
+      const faturasEntry = mainMenuResponses.faturas;
+      if (faturasEntry.subList) {
+        await sendList(
+          faturasEntry.subList.desc,
+          faturasEntry.subList.buttontext,
+          faturasEntry.subList.list
+        );
+      }
       await setSessionState(null);
-      console.log("avisa-webhook: auto-reply sub-menu enviado para:", id);
+      console.log("avisa-webhook: sub-menu faturas — aguardando falar_atendente:", id);
       return;
     }
 
@@ -363,6 +439,127 @@ function fixUtf8(str: string): string {
   }
 }
 
+/**
+ * Extrai número só de JIDs que representam telefone WhatsApp.
+ * - @s.whatsapp.net: local pode ser "554792922940" ou "554792922940:57" → usar parte antes de ':' (número bruto).
+ * - @lid: não é telefone (ex.: 124867835863250) → ignorar.
+ * - @g.us: grupo → não usar como telefone de contato.
+ */
+function extractPhoneFromJid(jid: string | null | undefined): string | null {
+  if (!jid || typeof jid !== "string") return null;
+  const trimmed = jid.trim();
+  if (trimmed.includes("@g.us")) return null;
+  if (trimmed.includes("@lid")) return null;
+
+  let localPart = trimmed.split("@")[0];
+  if (!localPart) return null;
+
+  // Formato número:device → telefone é só a parte antes dos dois-pontos
+  if (localPart.includes(":")) {
+    localPart = localPart.split(":")[0];
+  }
+
+  const digits = localPart.replace(/[^0-9]/g, "");
+  // E.164 até ~15 dígitos; aceitar até 20 por variações de payload
+  if (digits.length >= 10 && digits.length <= 20) return digits;
+
+  return null;
+}
+
+/**
+ * Resolve o número do cliente a partir de Chat, Sender, etc.
+ * AvisaAPI às vezes manda telefone em Chat, outras em Sender; SenderAlt pode ser @lid (não é telefone).
+ */
+function resolvePhoneNumberFromInfo(info: any, data: any): string {
+  const chat = info.Chat ?? info.chat;
+  const sender = info.Sender ?? info.sender;
+  const recipient = info.Recipient ?? info.recipient;
+
+  const candidates: string[] = [];
+  const push = (jid: string | null | undefined) => {
+    const n = extractPhoneFromJid(jid);
+    if (n && !candidates.includes(n)) candidates.push(n);
+  };
+
+  // Ordem: Chat (conversa) → Sender → Recipient (quem enviou / com quem falar)
+  push(chat);
+  push(sender);
+  push(recipient);
+
+  // Preferir número BR (55 + DDD + número) quando houver mais de um candidato
+  const brLike = candidates.find((c) =>
+    c.startsWith("55") && c.length >= 12 && c.length <= 13
+  );
+  if (brLike) {
+    console.log("avisa-webhook: phone resolved (BR):", brLike, "candidates:", candidates);
+    return brLike;
+  }
+
+  if (candidates.length > 0) {
+    console.log("avisa-webhook: phone resolved:", candidates[0], "candidates:", candidates);
+    return candidates[0];
+  }
+
+  // Fallback: payload direto (sem JID válido)
+  const fallback = String(data.phone ?? data.from ?? data.sender ?? "")
+    .replace(/[^0-9]/g, "");
+  if (fallback.length >= 10) return fallback;
+
+  // Último recurso: qualquer JID com @s.whatsapp.net não tratado acima
+  const anyJid = chat || sender || "";
+  if (anyJid.includes("@s.whatsapp.net")) {
+    const local = anyJid.split("@")[0].split(":")[0].replace(/[^0-9]/g, "");
+    if (local.length >= 10) return local;
+  }
+
+  // DeviceSentMeta / destino da mensagem (às vezes só ali vem o número do cliente)
+  const destJid =
+    info.DeviceSentMeta?.DestinationJID ??
+    info.deviceSentMeta?.destinationJID ??
+    info.DestinationJID;
+  push(destJid);
+
+  if (candidates.length > 0) {
+    const brLike2 = candidates.find((c) =>
+      c.startsWith("55") && c.length >= 12 && c.length <= 13
+    );
+    if (brLike2) return brLike2;
+    return candidates[0];
+  }
+
+  // Varredura em qualquer string do info que seja JID @s.whatsapp.net
+  const found = findWhatsAppPhoneJidInValue(info);
+  if (found) {
+    console.log("avisa-webhook: phone resolved (scan):", found);
+    return found;
+  }
+
+  return "";
+}
+
+/** Percorre objeto/array e retorna o primeiro número extraído de string *@s.whatsapp.net */
+function findWhatsAppPhoneJidInValue(val: any, depth = 0): string | null {
+  if (depth > 6 || val == null) return null;
+  if (typeof val === "string" && val.includes("@s.whatsapp.net")) {
+    const n = extractPhoneFromJid(val);
+    if (n) return n;
+  }
+  if (typeof val === "object") {
+    if (Array.isArray(val)) {
+      for (const item of val) {
+        const n = findWhatsAppPhoneJidInValue(item, depth + 1);
+        if (n) return n;
+      }
+    } else {
+      for (const k of Object.keys(val)) {
+        const n = findWhatsAppPhoneJidInValue(val[k], depth + 1);
+        if (n) return n;
+      }
+    }
+  }
+  return null;
+}
+
 function extractEventData(data: any) {
   const event = data.event ?? data;
   const info = event.Info ?? event.info ?? {};
@@ -374,9 +571,7 @@ function extractEventData(data: any) {
   const isGroup: boolean =
     info.IsGroup ?? info.isGroup ?? data.isGroup ?? chatJid.includes("@g.us");
 
-  const phoneFromJid = chatJid.split("@")[0].replace(/[^0-9]/g, "");
-  const phoneNumber = phoneFromJid
-    || (data.phone ?? data.from ?? data.sender ?? "").replace(/[^0-9]/g, "");
+  const phoneNumber = resolvePhoneNumberFromInfo(info, data);
 
   // Nome do contato (corrigir encoding UTF-8)
   const rawName: string =
@@ -455,6 +650,24 @@ Deno.serve(async (req) => {
     console.log("avisa-webhook source:", source);
     console.log("avisa-webhook data keys:", Object.keys(data));
 
+    // JSON completo recebido da AvisaAPI (para debug; truncado se muito grande)
+    try {
+      const jsonStr = JSON.stringify(data, null, 2);
+      const maxLen = 80000;
+      if (jsonStr.length > maxLen) {
+        console.log(
+          "avisa-webhook payload JSON (truncado):",
+          jsonStr.slice(0, maxLen),
+          `\n... [total ${jsonStr.length} chars, truncado em ${maxLen}]`
+        );
+      } else {
+        console.log("avisa-webhook payload JSON:", jsonStr);
+      }
+    } catch (e) {
+      console.log("avisa-webhook payload JSON: [erro ao serializar]", e);
+      console.log("avisa-webhook payload (raw data):", data);
+    }
+
     const {
       phoneNumber, contactName, content, externalMsgId,
       contentType, isFromMe, isGroup, eventType,
@@ -476,15 +689,6 @@ Deno.serve(async (req) => {
       );
     }
 
-    // Ignorar mensagens enviadas por nós
-    if (isFromMe) {
-      console.log("avisa-webhook: ignorando IsFromMe=true");
-      return new Response(
-        JSON.stringify({ status: "ignored", reason: "IsFromMe" }),
-        { headers: { ...corsHeaders, "Content-Type": "application/json" } }
-      );
-    }
-
     // Ignorar se não for mensagem
     if (eventType && eventType !== "Message" && eventType !== "text") {
       console.log("avisa-webhook: evento ignorado, type:", eventType);
@@ -494,15 +698,127 @@ Deno.serve(async (req) => {
       );
     }
 
-    if (!phoneNumber) {
-      console.error("avisa-webhook: telefone não encontrado");
+    // IsFromMe: mensagem enviada pelo WhatsApp da empresa — salvar como outbound (não incrementar unread)
+    if (isFromMe) {
+      if (eventType && eventType !== "Message" && eventType !== "text") {
+        return new Response(
+          JSON.stringify({ status: "ignored", reason: "not_a_message", type: eventType }),
+          { headers: { ...corsHeaders, "Content-Type": "application/json" } }
+        );
+      }
+      if (!phoneNumber) {
+        console.warn("avisa-webhook: IsFromMe sem telefone resolvido, ignorando");
+        return new Response(
+          JSON.stringify({ status: "ignored", reason: "phone_not_found_outbound" }),
+          { status: 200, headers: { ...corsHeaders, "Content-Type": "application/json" } }
+        );
+      }
+
+      const supabaseOut = createClient(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY);
+
+      if (externalMsgId) {
+        const { data: existingOut } = await supabaseOut
+          .from("whatsapp_messages")
+          .select("id")
+          .eq("external_msg_id", externalMsgId)
+          .maybeSingle();
+        if (existingOut) {
+          return new Response(
+            JSON.stringify({ status: "already_processed", message_id: existingOut.id }),
+            { headers: { ...corsHeaders, "Content-Type": "application/json" } }
+          );
+        }
+      }
+
+      const { data: conversationOut, error: convErrOut } = await supabaseOut
+        .from("whatsapp_conversations")
+        .upsert(
+          {
+            phone_number: phoneNumber,
+            contact_name: contactName,
+            last_message_at: new Date().toISOString(),
+            status: "active",
+          },
+          { onConflict: "phone_number" }
+        )
+        .select()
+        .single();
+
+      if (convErrOut || !conversationOut) {
+        console.error("avisa-webhook: IsFromMe erro conversa:", convErrOut);
+        throw new Error("Falha ao criar/atualizar conversa (outbound): " + convErrOut?.message);
+      }
+
+      const { data: msgOut, error: msgErrOut } = await supabaseOut
+        .from("whatsapp_messages")
+        .insert({
+          whatsapp_conversation_id: conversationOut.id,
+          direction: "outbound",
+          sender_type: "agent",
+          content: content || "(sem conteúdo de texto)",
+          content_type: contentType,
+          status: "sent",
+          external_msg_id: externalMsgId,
+          raw_payload: data,
+        })
+        .select()
+        .single();
+
+      if (msgErrOut) {
+        if (msgErrOut.code === "23505") {
+          return new Response(
+            JSON.stringify({ status: "duplicate_ignored" }),
+            { headers: { ...corsHeaders, "Content-Type": "application/json" } }
+          );
+        }
+        console.error("avisa-webhook: IsFromMe erro mensagem:", msgErrOut);
+        throw new Error("Falha ao salvar mensagem outbound: " + msgErrOut.message);
+      }
+
+      await supabaseOut
+        .from("service_queue")
+        .update({
+          last_message: content,
+          updated_at: new Date().toISOString(),
+        })
+        .eq("whatsapp_conversation_id", conversationOut.id)
+        .in("status", ["waiting", "in_progress"]);
+
+      console.log("avisa-webhook: outbound (WhatsApp direto) salva, message_id:", msgOut.id);
       return new Response(
-        JSON.stringify({ error: "Telefone não encontrado no payload" }),
-        { status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" } }
+        JSON.stringify({
+          status: "ok",
+          message_id: msgOut.id,
+          conversation_id: conversationOut.id,
+          phone_number: phoneNumber,
+          direction: "outbound",
+        }),
+        { headers: { ...corsHeaders, "Content-Type": "application/json" } }
+      );
+    }
+
+    if (!phoneNumber) {
+      // 200 evita retries agressivos; AvisaAPI pode reenviar se receber 400
+      const infoKeys = info && typeof info === "object" ? Object.keys(info) : [];
+      console.error("avisa-webhook: telefone não encontrado — info keys:", infoKeys);
+      console.error(
+        "avisa-webhook: Chat/Sender sample:",
+        (info.Chat || info.chat || "").slice(0, 80),
+        (info.Sender || info.sender || "").slice(0, 80)
+      );
+      return new Response(
+        JSON.stringify({
+          status: "ignored",
+          reason: "phone_not_found",
+          hint: "Nenhum JID @s.whatsapp.net com número válido em Chat/Sender/Recipient",
+          info_keys: infoKeys,
+        }),
+        { status: 200, headers: { ...corsHeaders, "Content-Type": "application/json" } }
       );
     }
 
     const supabase = createClient(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY);
+    const avisaApiKey = await resolveAvisaApiKey(supabase);
 
     // Idempotência
     if (externalMsgId) {
@@ -604,33 +920,30 @@ Deno.serve(async (req) => {
 
     // Enviar mensagens automáticas de boas-vindas no primeiro contato
     if (isNewConversation) {
-      const AVISA_API_TOKEN = Deno.env.get("AVISA_API_TOKEN");
-      if (AVISA_API_TOKEN) {
-        sendWelcomeMessages(phoneNumber, AVISA_API_TOKEN, supabase, conversation.id).catch((err) =>
+      if (avisaApiKey) {
+        sendWelcomeMessages(phoneNumber, avisaApiKey, supabase, conversation.id).catch((err) =>
           console.error("avisa-webhook: falha no envio de boas-vindas:", err)
         );
       } else {
-        console.warn("avisa-webhook: AVISA_API_TOKEN não configurado, boas-vindas não enviadas");
+        console.warn("avisa-webhook: AVISA_API_KEY não configurado, boas-vindas não enviadas");
       }
     }
 
     // Verificar estado do chatbot (ex: aguardando CPF)
     const chatbotState = conversation.session_data?.chatbot_state;
 
-    const AVISA_API_TOKEN = Deno.env.get("AVISA_API_TOKEN");
-
-    if (chatbotState === "awaiting_cpf" && AVISA_API_TOKEN && !selectedRowId && !selectedButtonId) {
+    if (chatbotState === "awaiting_cpf" && avisaApiKey && !selectedRowId && !selectedButtonId) {
       handleAutoReply(
         phoneNumber, contentType, "__awaiting_cpf__", null,
-        AVISA_API_TOKEN, supabase, conversation.id, content,
+        avisaApiKey, supabase, conversation.id, content,
       ).catch((err) => console.error("avisa-webhook: falha no auto-reply CPF:", err));
     }
     // Auto-reply para respostas de menu interativo
     else if (selectedRowId || selectedButtonId) {
-      if (AVISA_API_TOKEN) {
+      if (avisaApiKey) {
         handleAutoReply(
           phoneNumber, contentType, selectedRowId, selectedButtonId,
-          AVISA_API_TOKEN, supabase, conversation.id, content,
+          avisaApiKey, supabase, conversation.id, content,
         ).catch((err) => console.error("avisa-webhook: falha no auto-reply:", err));
       }
     }

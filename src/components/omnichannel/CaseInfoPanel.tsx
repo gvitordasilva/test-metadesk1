@@ -1,7 +1,6 @@
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Badge } from "@/components/ui/badge";
 import { Separator } from "@/components/ui/separator";
-import { Button } from "@/components/ui/button";
 import { ServiceTimer } from "./ServiceTimer";
 import { SentimentIndicator } from "./SentimentIndicator";
 import {
@@ -11,7 +10,6 @@ import {
   MapPin,
   FileText,
   Clock,
-  X,
   AlertCircle,
   Brain,
   Sparkles,
@@ -56,7 +54,6 @@ type CaseInfoPanelProps = {
   formattedDuration: string;
   isSessionActive: boolean;
   sentiment: "positive" | "neutral" | "frustrated" | "angry" | null;
-  onClose: () => void;
   tmaSla?: { target: number; warning: number | null; critical: number | null };
 };
 
@@ -96,7 +93,6 @@ export function CaseInfoPanel({
   formattedDuration,
   isSessionActive,
   sentiment,
-  onClose,
   tmaSla,
 }: CaseInfoPanelProps) {
   if (!caseData) {
@@ -114,12 +110,7 @@ export function CaseInfoPanel({
     <div className="w-80 border-l h-full flex flex-col bg-background">
       {/* Header */}
       <div className="p-4 border-b bg-muted/20">
-        <div className="flex items-center justify-between mb-3">
-          <h3 className="font-semibold">Informações do Caso</h3>
-          <Button variant="ghost" size="sm" onClick={onClose}>
-            <X className="h-4 w-4" />
-          </Button>
-        </div>
+        <h3 className="font-semibold mb-3">Informações do Caso</h3>
 
         {/* Timer e Sentimento */}
         <div className="space-y-2">

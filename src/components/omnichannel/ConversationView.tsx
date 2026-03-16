@@ -118,6 +118,28 @@ export function ConversationView({
   const { data: queueItems = [], isLoading: isQueueLoading } = useServiceQueue({ excludeCompleted: true });
   const queueItem = queueItems.find(item => item.id === conversationId);
 
+  // Ao abrir o chat, marcar como lido imediatamente (unread_count = 0) para a lista não mostrar badge
+  useEffect(() => {
+    if (!conversationId) return;
+    let cancelled = false;
+    (async () => {
+      const { data } = await supabase
+        .from("service_queue" as any)
+        .select("unread_count")
+        .eq("id", conversationId)
+        .maybeSingle();
+      if (cancelled || !data || Number(data.unread_count) === 0) return;
+      await supabase
+        .from("service_queue" as any)
+        .update({ unread_count: 0, updated_at: new Date().toISOString() })
+        .eq("id", conversationId);
+      queryClient.invalidateQueries({ queryKey: ["service-queue"] });
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [conversationId, queryClient]);
+
   // Detectar se é uma conversa WhatsApp via n8n/AvisaAPI
   const whatsappConvId = queueItem?.whatsapp_conversation_id ?? null;
   const isWhatsAppN8n = !isQueueLoading && queueItem?.channel === "whatsapp" && !!whatsappConvId;
@@ -126,6 +148,80 @@ export function ConversationView({
   const { data: whatsAppMsgs = [] } = useWhatsAppMessages(
     isWhatsAppN8n ? whatsappConvId : null
   );
+
+  // WhatsApp: só liberar "Iniciar Atendimento" quando o cliente escolheu "Falar com atendente" (session_data.agent_handoff_allowed)
+  // false até confirmar no banco — evita atendente iniciar antes do cliente pedir humano
+  const [agentHandoffAllowed, setAgentHandoffAllowed] = useState<boolean>(false);
+
+  useEffect(() => {
+    if (!isWhatsAppN8n || !whatsappConvId) {
+      setAgentHandoffAllowed(true); // outros canais: sem restrição
+      return;
+    }
+    setAgentHandoffAllowed(false); // WhatsApp: aguardar leitura session_data
+    let cancelled = false;
+    (async () => {
+      const { data } = await supabase
+        .from("whatsapp_conversations" as any)
+        .select("session_data")
+        .eq("id", whatsappConvId)
+        .maybeSingle();
+      if (cancelled || !data) return;
+      const allowed = !!(data.session_data && (data.session_data as any).agent_handoff_allowed === true);
+      setAgentHandoffAllowed(allowed);
+    })();
+    const ch = supabase
+      .channel(`wa-handoff-${whatsappConvId}`)
+      .on(
+        "postgres_changes",
+        {
+          event: "UPDATE",
+          schema: "public",
+          table: "whatsapp_conversations",
+          filter: `id=eq.${whatsappConvId}`,
+        },
+        (payload) => {
+          const sd = (payload.new as any)?.session_data;
+          setAgentHandoffAllowed(!!(sd && sd.agent_handoff_allowed === true));
+        }
+      )
+      .subscribe();
+    return () => {
+      cancelled = true;
+      supabase.removeChannel(ch);
+    };
+  }, [isWhatsAppN8n, whatsappConvId]);
+
+  // Com o chat aberto, mensagens inbound não devem subir unread — já estamos lendo em tempo real
+  useEffect(() => {
+    if (!isWhatsAppN8n || !whatsappConvId || !conversationId) return;
+
+    const channel = supabase
+      .channel(`wa-open-${whatsappConvId}`)
+      .on(
+        "postgres_changes",
+        {
+          event: "INSERT",
+          schema: "public",
+          table: "whatsapp_messages",
+          filter: `whatsapp_conversation_id=eq.${whatsappConvId}`,
+        },
+        async (payload) => {
+          const row = payload.new as { direction?: string };
+          if (row.direction !== "inbound") return;
+          await supabase
+            .from("service_queue" as any)
+            .update({ unread_count: 0, updated_at: new Date().toISOString() })
+            .eq("id", conversationId);
+          queryClient.invalidateQueries({ queryKey: ["service-queue"] });
+        }
+      )
+      .subscribe();
+
+    return () => {
+      supabase.removeChannel(channel);
+    };
+  }, [isWhatsAppN8n, whatsappConvId, conversationId, queryClient]);
 
   // Load messages for this conversation
   const loadMessages = useCallback(async () => {
@@ -831,9 +927,7 @@ export function ConversationView({
                           <div
                             className={cn(
                               "max-w-[75%] rounded-lg p-3",
-                              entry.sender_type === "agent"
-                                ? "bg-primary text-primary-foreground"
-                                : entry.sender_type === "bot"
+                              entry.sender_type === "agent" || entry.sender_type === "bot"
                                 ? "bg-amber-100 text-foreground"
                                 : "bg-muted"
                             )}
@@ -959,14 +1053,28 @@ export function ConversationView({
                     </div>
                   </>
                 ) : (
-                  <Button
-                    onClick={onStartSession}
-                    className="w-full h-12 text-base"
-                    size="lg"
-                  >
-                    <Play className="h-5 w-5 mr-2" />
-                    Iniciar Atendimento
-                  </Button>
+                  <TooltipProvider>
+                    <Tooltip>
+                      <TooltipTrigger asChild>
+                        <span className="block w-full">
+                          <Button
+                            onClick={onStartSession}
+                            className="w-full h-12 text-base"
+                            size="lg"
+                            disabled={isWhatsAppN8n && !agentHandoffAllowed}
+                          >
+                            <Play className="h-5 w-5 mr-2" />
+                            Iniciar Atendimento
+                          </Button>
+                        </span>
+                      </TooltipTrigger>
+                      {isWhatsAppN8n && !agentHandoffAllowed && (
+                        <TooltipContent side="top" className="max-w-xs">
+                          Disponível após o cliente escolher <strong>Falar com atendente</strong> no menu do WhatsApp.
+                        </TooltipContent>
+                      )}
+                    </Tooltip>
+                  </TooltipProvider>
                 )}
               </div>
             </>

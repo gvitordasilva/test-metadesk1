@@ -16,8 +16,32 @@ import {
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
 import { Badge } from "@/components/ui/badge";
 import { cn } from "@/lib/utils";
-import { WaitingTimeIndicator } from "./WaitingTimeIndicator";
-import { useServiceQueue, ServiceQueueItem, ServiceQueueChannel } from "@/hooks/useServiceQueue";
+import { useServiceQueue, ServiceQueueChannel } from "@/hooks/useServiceQueue";
+
+/** Estilo WhatsApp: horário se hoje, "Ontem" se ontem, data se mais antigo */
+function formatLastMessageTime(dateInput: string | Date): string {
+  const d = typeof dateInput === "string" ? new Date(dateInput) : dateInput;
+  if (Number.isNaN(d.getTime())) return "";
+
+  const now = new Date();
+  const startOfToday = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+  const startOfMsg = new Date(d.getFullYear(), d.getMonth(), d.getDate());
+  const diffMs = startOfToday.getTime() - startOfMsg.getTime();
+  const diffDays = Math.round(diffMs / (24 * 60 * 60 * 1000));
+
+  if (diffDays === 0) {
+    return d.toLocaleTimeString("pt-BR", { hour: "2-digit", minute: "2-digit" });
+  }
+  if (diffDays === 1) {
+    return "Ontem";
+  }
+  const sameYear = d.getFullYear() === now.getFullYear();
+  return d.toLocaleDateString("pt-BR", {
+    day: "2-digit",
+    month: "2-digit",
+    ...(sameYear ? {} : { year: "numeric" }),
+  });
+}
 
 // Configuração de canais (padronizado com Monitoramento)
 const channelConfig: Record<ServiceQueueChannel, { icon: React.ElementType; color: string; label: string }> = {
@@ -197,14 +221,13 @@ export function ConversationsList({
                     </div>
                   </div>
                   <div className="flex-grow min-w-0">
-                    <div className="flex justify-between items-center mb-1">
-                      <h4 className="font-medium truncate">
+                    <div className="flex justify-between items-center gap-2 mb-1">
+                      <h4 className="font-medium truncate min-w-0">
                         {item.customer_name || "Anônimo"}
                       </h4>
-                      <WaitingTimeIndicator
-                        waitingSince={item.waiting_since}
-                        size="sm"
-                      />
+                      <span className="text-xs text-muted-foreground flex-shrink-0 tabular-nums">
+                        {formatLastMessageTime(item.updated_at || item.waiting_since)}
+                      </span>
                     </div>
                     <p className="text-sm text-muted-foreground truncate">
                       {item.last_message || item.subject || "Novo atendimento"}
@@ -221,7 +244,8 @@ export function ConversationsList({
                       </span>
                     )}
                   </div>
-                  {item.unread_count > 0 && (
+                  {/* Com o chat aberto a conversa já é lida — não mostrar badge no item selecionado */}
+                  {item.unread_count > 0 && selectedId !== item.id && (
                     <Badge className="bg-metadesk-green ml-2 flex-shrink-0">
                       {item.unread_count}
                     </Badge>
